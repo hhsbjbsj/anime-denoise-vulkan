@@ -1,0 +1,33 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Anime Denoise Vulkan" Manufacturer="hhsbjbsj"
+           Version="$(var.Version)" UpgradeCode="D8715AC9-1118-4091-92D2-1B305A182587" Scope="perUser">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Anime Denoise Vulkan is installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <Icon Id="AppIcon" SourceFile="$(var.Payload)\app\icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/hhsbjbsj/anime-denoise-vulkan" />
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="UserPrograms" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="AnimeDenoiseVulkan" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="DesktopFolder" />
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <Feature Id="Application" Title="Anime Denoise Vulkan" Level="1">
+      <Files Directory="INSTALLFOLDER" Include="$(var.Payload)\**" />
+      <Component Id="Shortcuts" Directory="INSTALLFOLDER" Guid="1173F85D-18A8-4142-8D44-A312B9C3CA0D">
+        <Shortcut Id="DesktopShortcut" Directory="DesktopFolder" Name="Anime Denoise Vulkan"
+                  Target="[INSTALLFOLDER]runtime\pythonw.exe"
+                  Arguments="&quot;[INSTALLFOLDER]start_windows.py&quot;"
+                  Icon="AppIcon" WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="Anime Denoise Vulkan"
+                  Target="[INSTALLFOLDER]runtime\pythonw.exe"
+                  Arguments="&quot;[INSTALLFOLDER]start_windows.py&quot;"
+                  Icon="AppIcon" WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\AnimeDenoiseVulkan" Name="Installed"
+                       Value="1" Type="integer" KeyPath="yes" />
+        <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+      </Component>
+    </Feature>
+  </Package>
+</Wix>

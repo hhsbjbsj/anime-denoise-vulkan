@@ -1,0 +1,5 @@
+torch>=2.1
+spandrel>=0.4
+numpy>=1.24
+pillow>=10.0
+psutil>=5.8

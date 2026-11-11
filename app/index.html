@@ -1,0 +1,1577 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anime Denoise Vulkan</title>
+<link rel="icon" href="/favicon.ico">
+<script>
+  // apply the saved theme before first paint
+  try { const t = JSON.parse(localStorage.getItem("ad.theme")); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
+</script>
+<style>
+  :root {
+    --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+    --bg: #f3f1ec; --panel: #fbfaf7; --panel-2: #eeebe4; --line: #e2ded5; --line-2: #d2ccc1;
+    --text: #1d1b18; --text-2: #4a463f; --muted: #7c766c; --faint: #a7a196;
+    --primary: #22201c; --primary-2: #000000; --on-primary: #faf8f4; --sel-ring: rgba(29, 27, 24, .14);
+    --accent: #b9472f; --accent-2: #9c3a25; --accent-soft: #f5e7e2; --accent-ring: rgba(185, 71, 47, .22);
+    --stage: #e8e5de; --stage-dot: rgba(29, 27, 24, .05);
+    --ok: #3f7d52; --ok-soft: #e5f0e7; --err: #b9472f; --err-soft: #f5e7e2;
+    --shadow-1: 0 1px 2px rgba(29, 27, 24, .07);
+    --shadow-2: 0 10px 30px rgba(29, 27, 24, .13), 0 2px 6px rgba(29, 27, 24, .06);
+    --glass: rgba(251, 250, 247, .88);
+    --mask: 185, 71, 47;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121110; --panel: #191816; --panel-2: #22211e; --line: #2c2a26; --line-2: #3a3732;
+      --text: #ece8e1; --text-2: #c9c3b9; --muted: #948d82; --faint: #625c54;
+      --primary: #ece8e1; --primary-2: #ffffff; --on-primary: #161513; --sel-ring: rgba(236, 232, 225, .16);
+      --accent: #e07a5f; --accent-2: #ea8f77; --accent-soft: rgba(224, 122, 95, .14); --accent-ring: rgba(224, 122, 95, .3);
+      --stage: #0c0b0a; --stage-dot: rgba(255, 255, 255, .04);
+      --ok: #6dbb84; --ok-soft: rgba(109, 187, 132, .13); --err: #ef8a73; --err-soft: rgba(239, 138, 115, .13);
+      --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
+      --shadow-2: 0 12px 34px rgba(0, 0, 0, .5), 0 2px 6px rgba(0, 0, 0, .3);
+      --glass: rgba(27, 26, 23, .88);
+      --mask: 224, 122, 95;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121110; --panel: #191816; --panel-2: #22211e; --line: #2c2a26; --line-2: #3a3732;
+    --text: #ece8e1; --text-2: #c9c3b9; --muted: #948d82; --faint: #625c54;
+    --primary: #ece8e1; --primary-2: #ffffff; --on-primary: #161513; --sel-ring: rgba(236, 232, 225, .16);
+    --accent: #e07a5f; --accent-2: #ea8f77; --accent-soft: rgba(224, 122, 95, .14); --accent-ring: rgba(224, 122, 95, .3);
+    --stage: #0c0b0a; --stage-dot: rgba(255, 255, 255, .04);
+    --ok: #6dbb84; --ok-soft: rgba(109, 187, 132, .13); --err: #ef8a73; --err-soft: rgba(239, 138, 115, .13);
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
+    --shadow-2: 0 12px 34px rgba(0, 0, 0, .5), 0 2px 6px rgba(0, 0, 0, .3);
+    --glass: rgba(27, 26, 23, .88);
+    --mask: 224, 122, 95;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+  button:disabled { cursor: default; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .num { font-variant-numeric: tabular-nums; }
+  svg.i { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  kbd { font: 11px/1 var(--font); padding: 3px 5px; border-radius: 5px; border: 1px solid var(--line-2); border-bottom-width: 2px; color: var(--muted); background: var(--panel); }
+
+  .app { display: grid; grid-template-columns: 312px 1fr; grid-template-rows: 52px 1fr; height: 100vh; }
+
+  /* ---------- top bar ---------- */
+  .top { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 0 14px 0 18px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .mark { width: 28px; height: 28px; border-radius: 7px; background: var(--accent); display: grid; place-items: center; }
+  .brand b { font-size: 15px; font-weight: 650; letter-spacing: .1px; }
+  .brand span { color: var(--muted); font-size: 12.5px; margin-left: 10px; }
+  .top-actions { margin-left: auto; display: flex; gap: 2px; }
+  .tbtn { display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 11px; border-radius: 8px; color: var(--text-2); font-size: 13px; }
+  .tbtn:hover { background: var(--panel-2); color: var(--text); }
+
+  /* ---------- left panel ---------- */
+  .panel { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .panel-scroll { flex: 1; overflow-y: auto; padding: 18px 18px 8px; }
+  .sec { padding: 0 0 20px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+  .sec:last-child { border-bottom: 0; margin-bottom: 0; }
+  .sec-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .sec-head h2 { margin: 0; font-size: 13px; font-weight: 650; color: var(--text); display: flex; align-items: center; gap: 7px; }
+  .sec-head h2 svg { color: var(--muted); }
+  .pill { font-size: 11.5px; line-height: 20px; padding: 0 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); white-space: nowrap; }
+  .pill.accent { background: var(--accent-soft); color: var(--accent); }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  .hint { margin: 10px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+
+  .file { display: flex; gap: 12px; align-items: center; }
+  .file .thumb { width: 52px; height: 52px; border-radius: 10px; object-fit: cover; background: var(--panel-2); border: 1px solid var(--line); flex: none; }
+  .file .thumb.blank { display: grid; place-items: center; color: var(--faint); }
+  .file .meta { min-width: 0; flex: 1; }
+  .file .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file .dims { color: var(--muted); font-size: 12.5px; }
+  .status { display: flex; align-items: center; gap: 7px; margin-top: 12px; font-size: 12.5px; color: var(--text-2); }
+  .status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+  .status.ok .dot { background: var(--ok); }
+  .status.run .dot { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+  .status.err { color: var(--err); } .status.err .dot { background: var(--err); }
+  @keyframes pulse { 50% { opacity: .3; } }
+
+  .presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .preset { border: 1px solid var(--line); border-radius: 10px; padding: 9px 6px 8px; text-align: center; background: var(--panel); transition: border-color .12s, background .12s; }
+  .preset b { display: block; font-size: 13.5px; font-weight: 600; }
+  .preset small { display: block; font-size: 11px; color: var(--faint); margin-top: 1px; }
+  .preset:hover:not(:disabled) { border-color: var(--line-2); background: var(--panel-2); }
+  .preset[aria-checked="true"] { border-color: var(--primary); background: var(--primary); }
+  .preset[aria-checked="true"] b { color: var(--on-primary); }
+  .preset[aria-checked="true"] small { color: var(--on-primary); opacity: .62; }
+
+  .tune { margin-top: 16px; padding: 14px 14px 12px; border-radius: 12px; background: var(--panel-2); }
+  .tune-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--muted); letter-spacing: .3px; }
+  .tune-body { padding-top: 10px; }
+  .field + .field { margin-top: 16px; }
+  .field-top { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-2); }
+  .field-top output { color: var(--text); font-weight: 600; }
+  .ends { display: flex; justify-content: space-between; color: var(--faint); font-size: 11.5px; margin-top: 2px; }
+  .linkbtn { color: var(--accent); font-size: 12.5px; }
+  .linkbtn:hover { text-decoration: underline; }
+
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; margin: 4px 0 0; background: transparent; cursor: pointer; --p: 50%; }
+  input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(var(--primary), var(--primary)) 0 / var(--p) 100% no-repeat, var(--line-2); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -6px; border-radius: 50%; background: var(--panel); border: 2px solid var(--primary); box-shadow: var(--shadow-1); }
+  input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: var(--line-2); }
+  input[type=range]::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--primary); }
+  input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: var(--panel); border: 2px solid var(--primary); }
+  input[type=range]:disabled { opacity: .45; cursor: default; }
+
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--panel); font-weight: 600; font-size: 13.5px; color: var(--text); transition: background .12s, border-color .12s; }
+  .btn:hover:not(:disabled) { background: var(--panel-2); }
+  .btn.wide { width: 100%; }
+  .btn.primary { background: var(--primary); border-color: transparent; color: var(--on-primary); box-shadow: var(--shadow-1); }
+  .btn.primary:hover:not(:disabled) { background: var(--primary-2); }
+  .btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .btn:disabled { background: var(--panel-2); border-color: var(--line); color: var(--faint); box-shadow: none; }
+  .btn.icon { width: 40px; padding: 0; }
+  .btn kbd { margin-left: 2px; }
+  .protect-sum { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12.5px; color: var(--text-2); }
+  .protect-sum .dot { width: 7px; height: 7px; border-radius: 50%; background: rgb(var(--mask)); }
+  .protect-sum .linkbtn { margin-left: auto; }
+
+  .panel-foot { border-top: 1px solid var(--line); padding: 14px 18px 16px; }
+  .foot-row { display: flex; gap: 8px; }
+  .foot-row .primary { flex: 1; height: 44px; font-size: 14px; }
+  .foot-row .icon { height: 44px; width: 44px; }
+  .foot-note { margin-top: 9px; font-size: 12px; color: var(--muted); text-align: center; min-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .foot-note .flink { color: var(--accent); cursor: pointer; }
+  .foot-note .flink:hover { text-decoration: underline; }
+
+  /* ---------- work area ---------- */
+  .work { display: grid; grid-template-rows: auto 1fr auto; min-width: 0; min-height: 0; padding: 0 14px; }
+  .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 0; }
+  .seg { display: inline-flex; padding: 3px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); }
+  .seg button { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: 7px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .seg button:hover:not(:disabled) { color: var(--text); }
+  .seg button.on { background: var(--panel); color: var(--text); box-shadow: var(--shadow-1); font-weight: 600; }
+  .seg button:disabled { opacity: .45; }
+  .seg button kbd { font-size: 10px; padding: 2px 4px; }
+  .seg .lbl { display: flex; align-items: center; padding: 0 6px 0 9px; font-size: 12px; color: var(--faint); }
+  .tb-hint { color: var(--faint); font-size: 12.5px; white-space: nowrap; }
+  .zoom { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+  .zoom button { height: 30px; min-width: 30px; padding: 0 8px; border-radius: 8px; color: var(--text-2); font-size: 13px; display: grid; place-items: center; white-space: nowrap; }
+  .zoom button:hover { background: var(--panel-2); color: var(--text); }
+  .zoom .pct { width: 52px; text-align: center; color: var(--muted); font-size: 12.5px; }
+
+  .stage { position: relative; min-height: 0; border-radius: 14px; overflow: hidden; background-color: var(--stage); border: 1px solid var(--line);
+    background-image: radial-gradient(var(--stage-dot) 1px, transparent 1.2px); background-size: 18px 18px; user-select: none; touch-action: none; }
+  .stage.has { cursor: grab; }
+  .stage.paint { cursor: none; }
+  .stage.lasso { cursor: crosshair; }
+  .lasso-svg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 6; pointer-events: none; overflow: visible; }
+  .lasso-svg path { fill: none; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+  .lasso-svg .ant-b { stroke: rgba(0, 0, 0, .8); }
+  .lasso-svg .ant-w { stroke: #fff; stroke-dasharray: 5 4; animation: ants .5s linear infinite; }
+  .lasso-svg .anc { fill: #fff; stroke: rgba(0, 0, 0, .8); stroke-width: 1; }
+  .lasso-svg circle { fill: #fff; stroke: rgba(0, 0, 0, .8); stroke-width: 1.2; }
+  .lasso-svg circle.near { fill: rgb(var(--mask)); stroke: #fff; stroke-width: 2; }
+  @keyframes ants { to { stroke-dashoffset: -9; } }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+  .row2 .btn { padding: 0 8px; gap: 6px; white-space: nowrap; min-width: 0; }
+  .fb-field.off { opacity: .4; pointer-events: none; }
+  .stage.space { cursor: grab !important; }
+  .stage.panning { cursor: grabbing !important; }
+  .stage.sizing { cursor: none !important; }
+  /* the floating toolbar is UI, not canvas: normal cursors even while painting / panning */
+  .floatbar { cursor: default !important; }
+  .floatbar button, .floatbar label, .floatbar input { cursor: pointer !important; }
+  .frame { position: absolute; pointer-events: none; box-shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 14px 40px rgba(0, 0, 0, .16);
+    background: #fff; background-image: linear-gradient(45deg, #e3e3e8 25%, transparent 25%, transparent 75%, #e3e3e8 75%), linear-gradient(45deg, #e3e3e8 25%, transparent 25%, transparent 75%, #e3e3e8 75%);
+    background-size: 16px 16px; background-position: 0 0, 8px 8px; }
+  .layer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+  .layer img, .layer canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none; }
+  .layer .px { image-rendering: pixelated; }
+  #Lm { opacity: 0; transition: opacity .35s ease; }
+  #Lm.show { opacity: 1; transition: opacity .06s; }
+  .tag { position: absolute; top: 12px; z-index: 3; padding: 4px 10px; border-radius: 7px; font-size: 12px; color: #fff; background: rgba(22, 20, 18, .6); backdrop-filter: blur(6px); pointer-events: none; }
+  .tag.l { left: 12px; } .tag.r { right: 12px; }
+  .stage.brushing .tag { top: 72px; }
+  .divider { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: rgba(255, 255, 255, .95); box-shadow: 0 0 0 1px rgba(0, 0, 0, .12); z-index: 2; cursor: ew-resize; }
+  .knob { position: absolute; top: 50%; left: 50%; width: 36px; height: 36px; margin: -18px 0 0 -18px; border-radius: 50%; background: #fff; box-shadow: 0 2px 10px rgba(0, 0, 0, .25); display: grid; place-items: center; color: #33333b; }
+  .knob svg { width: 18px; height: 18px; }
+  .brush { position: absolute; z-index: 6; border-radius: 50%; border: 1.5px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .45), inset 0 0 0 1px rgba(0, 0, 0, .25); pointer-events: none; transform: translate(-50%, -50%); }
+  .brush.erase { border-style: dashed; }
+  .size-tip { position: absolute; z-index: 9; transform: translate(-50%, -100%); padding: 3px 8px; border-radius: 6px; font-size: 12px; color: #fff; background: rgba(22, 20, 18, .78); pointer-events: none; white-space: nowrap; }
+
+  .floatbar { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 7; display: flex; align-items: center; gap: 4px; padding: 6px; border-radius: 14px;
+    background: var(--glass); backdrop-filter: blur(14px); border: 1px solid var(--line); box-shadow: var(--shadow-2); white-space: nowrap;
+    width: max-content; max-width: calc(100% - 24px); flex-wrap: wrap; justify-content: center; }
+  .floatbar .sep { width: 1px; height: 24px; background: var(--line-2); margin: 0 6px; }
+  .floatbar .seg { background: var(--panel-2); }
+  .fb-field { display: flex; align-items: center; gap: 8px; padding: 0 6px; font-size: 12.5px; color: var(--text-2); }
+  .fb-field input { width: 84px; margin: 0; }
+  .fb-field output { width: 38px; color: var(--text); font-weight: 600; text-align: right; }
+  .ib { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--text-2); }
+  .ib:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
+  .ib:disabled { opacity: .35; }
+  .ib.on { color: var(--text); background: var(--panel-2); }
+  .saved { font-size: 12px; color: var(--faint); padding: 0 6px; min-width: 52px; text-align: center; }
+  .done-btn { height: 32px; padding: 0 14px; border-radius: 9px; background: var(--primary); color: var(--on-primary); font-weight: 600; font-size: 13px; }
+  .tip { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); overflow: hidden; text-overflow: ellipsis; z-index: 5; padding: 6px 12px; border-radius: 9px; font-size: 12px; color: #fff; background: rgba(22, 20, 18, .64); backdrop-filter: blur(6px); white-space: nowrap; pointer-events: none; }
+
+  .progress { position: absolute; inset: 0 0 auto 0; z-index: 8; pointer-events: none; }
+  .progress .bar { height: 2px; background: linear-gradient(90deg, transparent, var(--accent), transparent); background-size: 40% 100%; background-repeat: no-repeat; animation: slide 1.1s linear infinite; }
+  @keyframes slide { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+  .pcard { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); width: max-content; display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 12px; background: var(--glass); backdrop-filter: blur(14px); border: 1px solid var(--line); box-shadow: var(--shadow-2); font-size: 13px; white-space: nowrap; }
+  .floatbar:not([hidden]) ~ .progress .pcard { top: 70px; }
+  .pcard .t { color: var(--muted); }
+  .spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--accent-ring); border-top-color: var(--accent); animation: r .8s linear infinite; flex: none; }
+  @keyframes r { to { transform: rotate(360deg); } }
+
+  .empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; }
+  .chip-dev { display: flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px; margin-right: 6px; border-radius: 999px; background: var(--panel-2); color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .chip-dev i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+  .empty-card { text-align: center; max-width: 470px; padding: 40px 36px 34px; border-radius: 18px; border: 1.5px dashed var(--line-2); background: color-mix(in srgb, var(--panel) 70%, transparent); }
+  .empty-icon { width: 56px; height: 56px; margin: 0 auto 16px; border-radius: 16px; display: grid; place-items: center; background: var(--panel-2); color: var(--text-2); }
+  .empty-icon svg { width: 26px; height: 26px; }
+  .empty h3 { margin: 0 0 6px; font-size: 18px; font-weight: 650; }
+  .empty p { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+  .empty small { display: block; margin-top: 16px; color: var(--faint); font-size: 12px; }
+
+  .strip { display: flex; align-items: center; gap: 10px; padding: 10px 0 12px; min-height: 86px; overflow-x: auto; }
+  .sitem, .sadd { position: relative; flex: none; width: 62px; height: 62px; border-radius: 11px; }
+  .sadd { border: 1.5px dashed var(--line-2); color: var(--muted); display: grid; place-items: center; }
+  .sadd:hover { border-color: var(--primary); color: var(--text); }
+  .sitem img { width: 100%; height: 100%; object-fit: cover; border-radius: 11px; border: 1px solid var(--line); display: block; background: var(--panel-2); }
+  .sitem.cur img { border: 2px solid var(--primary); box-shadow: 0 0 0 3px var(--sel-ring); }
+  .sbadge { position: absolute; right: -4px; bottom: -4px; min-width: 20px; height: 20px; border-radius: 10px; display: grid; place-items: center; font-size: 11px; font-weight: 700; padding: 0 5px; border: 2px solid var(--bg); }
+  .sbadge.ok { background: var(--ok); color: #fff; }
+  .sbadge.err { background: var(--err); color: #fff; }
+  .sbadge.wait { background: var(--panel-2); color: var(--muted); }
+  .sbadge.run { background: var(--panel); padding: 0; } .sbadge.run .spin { width: 12px; height: 12px; border-width: 2px; }
+  .sbadge.mask { left: -4px; right: auto; background: rgb(var(--mask)); color: #fff; }
+  .sdel { position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: var(--primary); color: var(--on-primary); display: none; place-items: center; font-size: 12px; line-height: 1; }
+  .sitem:hover .sdel { display: grid; }
+  .strip-note { color: var(--faint); font-size: 12px; margin-left: 4px; white-space: nowrap; }
+
+  /* ---------- overlays ---------- */
+  .drop { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(4px); display: grid; place-items: center; pointer-events: none; }
+  .drop div { padding: 34px 48px; border-radius: 20px; border: 2px dashed var(--primary); background: var(--panel); font-size: 16px; font-weight: 600; color: var(--text); box-shadow: var(--shadow-2); }
+  .toasts { position: fixed; left: 50%; bottom: 104px; transform: translateX(-50%); z-index: 60; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
+  .toast { pointer-events: auto; display: flex; align-items: center; gap: 12px; max-width: 560px; padding: 10px 12px 10px 16px; border-radius: 12px; background: #22201c; color: #f6f3ee; font-size: 13px; box-shadow: var(--shadow-2); animation: up .18s ease-out; }
+  .toast.err { background: var(--err); color: #fff; }
+  .toast button { color: inherit; opacity: .7; font-size: 15px; width: 22px; height: 22px; }
+  @keyframes up { from { opacity: 0; transform: translateY(8px); } }
+  dialog { border: 1px solid var(--line); border-radius: 18px; padding: 0; background: var(--panel); color: var(--text); box-shadow: var(--shadow-2); max-width: min(760px, calc(100vw - 32px)); }
+  #helpDlg { width: min(760px, calc(100vw - 32px)); }
+  dialog::backdrop { background: rgba(10, 10, 14, .42); backdrop-filter: blur(3px); }
+  .dlg { padding: 24px 26px 22px; }
+  .dlg h3 { margin: 0 0 16px; font-size: 17px; }
+  .dlg h4 { margin: 22px 0 10px; font-size: 13px; color: var(--muted); font-weight: 600; }
+  .formula { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr; align-items: stretch; gap: 8px; }
+  .formula .op { display: grid; place-items: center; color: var(--faint); font-size: 18px; }
+  .fcard { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: var(--panel-2); font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+  .fcard b { display: block; color: var(--text); font-size: 13.5px; margin-bottom: 4px; }
+  .fcard.last { border-color: var(--primary); background: var(--panel); }
+  .fcard.last b { color: var(--accent); }
+  .keys { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 28px; font-size: 13px; }
+  .keys div { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 3px 0; color: var(--text-2); }
+  .keys span:last-child { display: flex; gap: 4px; flex: none; }
+  .dlg-foot { display: flex; align-items: center; gap: 10px; margin-top: 22px; }
+  .dlg-foot .note { color: var(--faint); font-size: 12px; margin-right: auto; }
+  .dlg-foot a { color: var(--accent); }
+  .ended { position: fixed; inset: 0; z-index: 99; display: grid; place-items: center; background: var(--bg); color: var(--muted); font-size: 15px; }
+
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: 52px auto minmax(420px, 1fr); }
+    .panel { border-right: 0; border-bottom: 1px solid var(--line); }
+    .brand span, .tbtn span { display: none; }
+    .tb-hint { display: none; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <!-- mask is an opaque grey image (brightness = restore strength); this turns grey into alpha for blending -->
+  <filter id="sqrtA" color-interpolation-filters="sRGB"><feComponentTransfer><feFuncA type="gamma" amplitude="1" exponent="0.5" offset="0"/></feComponentTransfer></filter>
+  <filter id="g2a" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  1 0 0 0 0"/></filter>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 2.5c.7 4.9 2.7 7.4 7.9 8.5-5.2 1.1-7.2 3.6-7.9 8.5-.7-4.9-2.7-7.4-7.9-8.5 5.2-1.1 7.2-3.6 7.9-8.5z"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="9.5" r="1.6"/><path d="m4 17 5-5 4 4 3-3 4 4"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></symbol>
+  <symbol id="i-auto" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.4M12 17h.01"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v8M6.3 6.6a8 8 0 1 0 11.4 0"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 3 8.2 7 10 4-1.8 7-5.5 7-10V6z"/></symbol>
+  <symbol id="i-brush" viewBox="0 0 24 24"><path d="M14.5 4.5 19.5 9.5 11 18a3 3 0 0 1-2.1.9H5v-3.9A3 3 0 0 1 5.9 13z"/><path d="m13 6 5 5"/></symbol>
+  <symbol id="i-eraser" viewBox="0 0 24 24"><path d="m7 21-4-4 10-10 8 8-6 6z"/><path d="M7 21h13M9 11l6 6"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></symbol>
+  <symbol id="i-eye-auto" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7c2.1 0 3.9.7 5.4 1.7M22 12s-3.5 7-10 7c-2.1 0-3.9-.7-5.4-1.7"/><circle cx="12" cy="12" r="3"/><path d="M19 3v4h-4M5 21v-4h4"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="i-lr" viewBox="0 0 24 24"><path d="m9 7-5 5 5 5M15 7l5 5-5 5"/></symbol>
+  <symbol id="i-lasso" viewBox="0 0 24 24"><path d="M6.6 14.2C4.4 13.1 3 11.4 3 9.5 3 6 7 3.5 12 3.5s9 2.5 9 6-4 6-9 6c-1.1 0-2.2-.1-3.2-.4"/><circle cx="7.6" cy="15.6" r="1.6"/><path d="M7.4 17.2c.2 1.6 1.4 2.6 3.1 3.1"/></symbol>
+  <symbol id="i-invert" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="3"/><path d="M12 3.5h5.5a3 3 0 0 1 3 3v11a3 3 0 0 1-3 3H12z" fill="currentColor"/></symbol>
+</svg>
+
+<div class="app">
+  <header class="top">
+    <div class="mark"><svg width="16" height="16" fill="#fff"><use href="#i-spark"/></svg></div>
+    <div class="brand"><b>Anime Denoise</b><span>GPT 二次元图去鱼鳞纹</span></div>
+    <div class="top-actions">
+      <span class="chip-dev" id="devChip" title="图片只在这台电脑上处理" hidden><i></i><span id="devName">本机处理</span></span>
+      <button class="tbtn" id="openOut" title="打开输出文件夹"><svg class="i"><use href="#i-folder"/></svg><span>输出文件夹</span></button>
+      <button class="tbtn" id="themeBtn" title="切换外观"><svg class="i"><use id="themeIcon" href="#i-auto"/></svg><span id="themeLabel">跟随系统</span></button>
+      <button class="tbtn" id="helpBtn" title="说明与快捷键（?）"><svg class="i"><use href="#i-help"/></svg><span>说明</span></button>
+      <button class="tbtn" id="quitBtn" title="结束工具"><svg class="i"><use href="#i-power"/></svg><span>结束</span></button>
+    </div>
+  </header>
+
+  <aside class="panel">
+    <div class="panel-scroll">
+      <section class="sec">
+        <div class="file">
+          <div class="thumb blank" id="fThumbBlank"><svg class="i"><use href="#i-image"/></svg></div>
+          <img class="thumb" id="fThumb" alt="" hidden>
+          <div class="meta">
+            <div class="name" id="fName">还没有图片</div>
+            <div class="dims num" id="fDims">拖进窗口，或按 Ctrl+O 选择</div>
+          </div>
+        </div>
+        <div class="status" id="fStatus" hidden><span class="dot"></span><span id="fStatusText"></span></div>
+      </section>
+
+      <section class="sec">
+        <div class="sec-head"><h2><svg class="i"><use href="#i-spark"/></svg>去噪强度</h2><span class="pill" id="paramPill">推荐</span></div>
+        <div class="presets" role="radiogroup" aria-label="去噪强度">
+          <button class="preset" role="radio" data-preset="gentle"><b>轻柔</b><small class="num">80% · 0.0006</small></button>
+          <button class="preset" role="radio" data-preset="recommended"><b>推荐</b><small class="num">60% · 0.001</small></button>
+          <button class="preset" role="radio" data-preset="strong"><b>强力</b><small class="num">45% · 0.0018</small></button>
+        </div>
+        <p class="hint" id="presetHint"></p>
+        <div class="tune" id="tune">
+          <div class="tune-head"><span>微调参数</span><button class="linkbtn" id="resetParams">恢复推荐</button></div>
+          <div class="tune-body">
+            <div class="field">
+              <div class="field-top"><span>预缩比例</span><output class="num" id="downOut"></output></div>
+              <input type="range" id="down" min="10" max="100" step="5">
+              <div class="ends"><span>去噪更强</span><span>细节更多</span></div>
+            </div>
+            <div class="field">
+              <div class="field-top"><span>L0 平滑</span><output class="num" id="l0Out"></output></div>
+              <input type="range" id="l0" min="0" max="0.005" step="0.0001">
+              <div class="ends"><span>留住淡阴影</span><span>色块更干净</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="sec">
+        <div class="sec-head"><h2><svg class="i"><use href="#i-shield"/></svg>局部保护</h2><span class="pill" id="protectPill">未使用</span></div>
+        <button class="btn wide" id="brushBtn"><svg class="i"><use href="#i-brush"/></svg><span id="brushBtnText">保护笔刷</span><kbd id="brushKbd">B</kbd></button>
+        <div class="row2">
+          <button class="btn" id="lassoBtn" title="磁性套索（L）：沿轮廓自动吸附，圈住的地方保持原图；再按 L 完成，Esc 放弃"><svg class="i"><use href="#i-lasso"/></svg><span id="lassoBtnText">磁性套索</span><kbd>L</kbd></button>
+          <button class="btn" id="invertBtn" title="反选（I）：保护区和去噪区互换"><svg class="i"><use href="#i-invert"/></svg>反选<kbd>I</kbd></button>
+        </div>
+        <p class="hint">腮红排线、细纹理、小字被抹掉了？涂上去就按比例混回原图，边缘自动柔化，马上生效。只想去背景：用磁性套索圈住人物；只想去人物：圈完再点反选。</p>
+        <div class="protect-sum" id="protectSum" hidden><span class="dot"></span><span id="protectSumText"></span><button class="linkbtn" id="clearMask">清除</button></div>
+      </section>
+    </div>
+    <footer class="panel-foot">
+      <div class="foot-row">
+        <button class="btn primary" id="dlBtn" disabled><svg class="i"><use href="#i-down"/></svg>下载 PNG</button>
+        <button class="btn icon" id="revealBtn" title="在文件夹中显示" disabled><svg class="i"><use href="#i-folder"/></svg></button>
+      </div>
+      <div class="foot-note" id="footNote">结果也会自动保存到 outputs 文件夹</div>
+    </footer>
+  </aside>
+
+  <main class="work">
+    <div class="toolbar">
+      <div class="seg" id="viewSeg">
+        <button data-v="cmp" class="on" title="左右对比（1）">对比</button>
+        <button data-v="before" title="全屏原图（2；X 在原图 / 结果间切换）">原图</button>
+        <button data-v="after" title="全屏结果（3；X 在原图 / 结果间切换）">结果</button>
+      </div>
+      <div class="seg" id="baseSeg" hidden>
+        <span class="lbl">左边</span>
+        <button data-b="orig" class="on">原图</button>
+        <button data-b="den">未保护结果</button>
+      </div>
+      <span class="tb-hint" id="viewHint"></span>
+      <div class="zoom">
+        <button id="zOut" title="缩小">−</button>
+        <span class="pct num" id="zPct">—</span>
+        <button id="zIn" title="放大">+</button>
+        <button id="zFit" title="适合画面（F，双击）">适合</button>
+        <button id="z11" title="原始大小（0）">1:1</button>
+      </div>
+    </div>
+
+    <div class="stage" id="stage">
+      <div class="frame" id="frame" hidden></div>
+      <div class="layer" id="Lb"><img id="imgB" alt=""></div>
+      <div class="layer" id="La"><canvas id="cvA"></canvas></div>
+      <div class="layer" id="Lm"><canvas id="cvM"></canvas></div>
+      <span class="tag l" id="tagL" hidden>原图</span><span class="tag r" id="tagR" hidden>结果</span>
+      <div class="divider" id="div" hidden><div class="knob" id="knob" tabindex="0" role="slider" aria-label="对比分割线" aria-valuemin="0" aria-valuemax="100"><svg class="i"><use href="#i-lr"/></svg></div></div>
+
+      <div class="floatbar" id="brushbar" hidden>
+        <div class="seg"><button data-t="brush" class="on" title="画笔（B）"><svg class="i"><use href="#i-brush"/></svg>画笔</button><button data-t="erase" title="橡皮（E，或右键拖动）"><svg class="i"><use href="#i-eraser"/></svg>橡皮</button><button data-t="lasso" title="磁性套索（L）：沿轮廓自动吸附，圈住的地方保持原图；按住 Alt 闭合或右键闭合 = 减去"><svg class="i"><use href="#i-lasso"/></svg>套索</button></div>
+        <span class="sep"></span>
+        <label class="fb-field" id="bSizeField" title="画笔大小，按原图像素（按住空格 + 滚轮，或 [ ]）">大小<input type="range" id="bSize" min="2" max="300" step="1"><output class="num" id="bSizeOut"></output></label>
+        <label class="fb-field" title="接下来这几笔混回原图的比例（颜色越深越强）；画过的地方再画会改成新比例；100% 就是完全不动">恢复原图<input type="range" id="bMix" min="0" max="100" step="5"><output class="num" id="bMixOut"></output></label>
+        <label class="fb-field" title="边缘渐变宽度；0 是硬边">柔边<input type="range" id="bFeather" min="0" max="150" step="2"><output class="num" id="bFeatherOut"></output></label>
+        <span class="sep"></span>
+        <button class="ib" id="bUndo" title="撤销（Ctrl+Z）"><svg class="i"><use href="#i-undo"/></svg></button>
+        <button class="ib" id="bRedo" title="重做（Ctrl+Shift+Z）"><svg class="i"><use href="#i-redo"/></svg></button>
+        <button class="ib" id="bEye" title="涂完自动隐藏范围（点击改成一直显示）；按住 M 看全部涂抹"><svg class="i"><use id="bEyeIcon" href="#i-eye-auto"/></svg></button>
+        <button class="ib" id="bInvert" title="反选（I）：保护区和去噪区互换（可撤销）"><svg class="i"><use href="#i-invert"/></svg></button>
+        <button class="ib" id="bClear" title="清除全部（可撤销）"><svg class="i"><use href="#i-trash"/></svg></button>
+        <span class="saved" id="bSaved"></span>
+        <button class="done-btn" id="bDone" title="完成涂抹（B 或 Esc）">完成</button>
+      </div>
+      <div class="tip" id="brushTip" hidden>涂到的地方混回原图 · 右键拖动擦除 · 按住空格：拖动画面 / 滚轮调笔刷大小 · 按住 M 看全部涂抹</div>
+
+      <div class="progress" id="prog" hidden><div class="bar"></div><div class="pcard"><span class="spin"></span><span id="progText">去噪中</span><span class="t num" id="progTime"></span></div></div>
+      <svg class="lasso-svg" id="lassoSvg" hidden aria-hidden="true"><path class="ant-b" id="lzB"/><path class="ant-w" id="lzW"/><path class="anc" id="lzA"/><circle id="lzStart" r="4.5"/></svg>
+      <div class="brush" id="brushCur" hidden></div>
+      <div class="size-tip num" id="sizeTip" hidden></div>
+
+      <div class="empty" id="empty">
+        <div class="empty-card">
+          <div class="empty-icon"><svg class="i"><use href="#i-image"/></svg></div>
+          <h3>拖入图片开始去噪</h3>
+          <p>放进来就自动处理，可以一次放多张，也能 Ctrl+V 粘贴。</p>
+          <button class="btn primary" id="emptyPick"><svg class="i"><use href="#i-plus"/></svg>选择图片</button>
+          <small>PNG · JPEG · WebP · BMP · GIF · TIFF · AVIF · 图片只在这台电脑上处理</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="strip" id="strip">
+      <button class="sadd" id="stripAdd" title="添加图片（Ctrl+O）"><svg class="i"><use href="#i-plus"/></svg></button>
+      <div id="stripItems" style="display:flex;gap:12px;align-items:center"></div>
+      <span class="strip-note" id="stripNote"></span>
+    </div>
+  </main>
+</div>
+
+<div class="drop" id="dropOverlay" hidden><div>松开即可加入</div></div>
+<div class="toasts" id="toasts"></div>
+<input type="file" id="fileInput" accept="image/*,.tif,.tiff,.tga,.avif,.jfif" multiple hidden>
+
+<dialog id="helpDlg">
+  <div class="dlg">
+    <h3>结果是怎么来的</h3>
+    <div class="formula">
+      <div class="fcard"><b>原图</b>永远不会被改动</div><div class="op">＋</div>
+      <div class="fcard"><b>去噪</b>按强度重算；松手就重跑，只改 L0 约 0.3 秒</div><div class="op">＋</div>
+      <div class="fcard"><b>局部保护</b>涂到的地方混回原图，马上生效</div><div class="op">＝</div>
+      <div class="fcard last"><b>结果</b>看到的就是下载的，也自动存到 outputs</div>
+    </div>
+    <h4>快捷键</h4>
+    <div class="keys">
+      <div><span>添加 / 粘贴图片</span><span><kbd>Ctrl</kbd><kbd>O</kbd> <kbd>Ctrl</kbd><kbd>V</kbd></span></div>
+      <div><span>开始涂抹 / 橡皮</span><span><kbd>B</kbd> <kbd>E</kbd></span></div>
+      <div><span>上一张 / 下一张</span><span><kbd>←</kbd> <kbd>→</kbd></span></div>
+      <div><span>结束涂抹</span><span><kbd>B</kbd> <kbd>Esc</kbd></span></div>
+      <div><span>对比 / 原图 / 结果</span><span><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></span></div>
+      <div><span>画笔大小</span><span><kbd>空格</kbd>+滚轮 <kbd>[</kbd> <kbd>]</kbd></span></div>
+      <div><span>按住暂时看原图</span><span><kbd>Z</kbd></span></div>
+      <div><span>擦除</span><span>右键拖动</span></div>
+      <div><span>适合画面 / 1:1</span><span><kbd>F</kbd> <kbd>0</kbd></span></div>
+      <div><span>拖动画面</span><span>按住 <kbd>空格</kbd></span></div>
+      <div><span>下载 / 重新去噪</span><span><kbd>Ctrl</kbd><kbd>S</kbd> <kbd>Ctrl</kbd><kbd>↵</kbd></span></div>
+      <div><span>撤销 / 重做</span><span><kbd>Ctrl</kbd><kbd>Z</kbd> <kbd>+Shift</kbd></span></div>
+      <div><span>缩放</span><span>滚轮</span></div>
+      <div><span>按住看全部涂抹</span><span><kbd>M</kbd></span></div>
+      <div><span>开始 / 完成磁性套索</span><span><kbd>L</kbd></span></div>
+      <div><span>放弃选框并退出套索</span><span><kbd>Esc</kbd></span></div>
+      <div><span>反选保护区</span><span><kbd>I</kbd></span></div>
+      <div><span>套索闭合 / 删上个锚点</span><span><kbd>↵</kbd> <kbd>⌫</kbd></span></div>
+      <div><span>全屏原图 ↔ 结果</span><span><kbd>X</kbd></span></div>
+    </div>
+    <div class="dlg-foot">
+      <span class="note">方法：缩小到预缩比例 → Real-ESRGAN 动漫超分放回原尺寸 → L0 平滑。<a href="https://github.com/CXP-2024/gpt-anime-denoise" target="_blank" rel="noopener">GitHub</a></span>
+      <button class="btn primary" id="helpClose">知道了</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="quitDlg">
+  <div class="dlg" style="width:380px">
+    <h3>结束去噪工具？</h3>
+    <p style="margin:0;color:var(--muted);font-size:13px">已完成的结果都在 outputs 文件夹里。之后要用，再从开始菜单或启动脚本打开。</p>
+    <div class="dlg-foot"><span class="note"></span><button class="btn" id="quitNo">取消</button><button class="btn primary" id="quitYes">结束</button></div>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+const TOKEN = "__TOKEN__";
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+const PRESETS = {
+  gentle: { down: 80, l0: 0.0006, name: "轻柔", hint: "去噪最轻，留住最多细节和淡阴影。" },
+  recommended: { down: 60, l0: 0.001, name: "推荐", hint: "去噪和细节平衡，适合大多数二次元图。" },
+  strong: { down: 45, l0: 0.0018, name: "强力", hint: "纹理去得最干净，淡渐变和细节也损失最多。" },
+};
+const store = (k, v) => { try { localStorage.setItem("ad." + k, JSON.stringify(v)); } catch {} };
+const recall = (k, d) => { try { const v = JSON.parse(localStorage.getItem("ad." + k)); return v ?? d; } catch { return d; } };
+const fmtL0 = v => (+v).toFixed(4).replace(/0+$/, "").replace(/\.$/, ".0");
+const same = (a, b) => a && b && a.down === b.down && Math.abs(a.l0 - b.l0) < 1e-9;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// brush settings start from these on every launch (user choice); changes last for the session
+const BRUSH_DEFAULTS = { brush: 14, mix: 90, feather: 10 };
+const S = {
+  items: [], cur: null, queue: [], running: null, info: {},
+  view: "cmp", base: "orig", split: 0.5, vp: null, lastFit: null,
+  brushMode: false, tool: "brush", eyeMode: recall("eyeMode", "auto"), flash: false, painting: false, overlayWhich: "all", overlayFor: null,
+  peekOrig: false, peekMask: false, flashAll: false, space: false, spaceMode: "", sizeAt: null,
+  brush: BRUSH_DEFAULTS.brush, params: recall("params", { down: 60, l0: 0.001 }),
+  mix: BRUSH_DEFAULTS.mix, feather: BRUSH_DEFAULTS.feather, toldBrush: recall("toldBrush", false),
+};
+let nextId = 1;
+const stage = $("#stage"), imgB = $("#imgB"), cvA = $("#cvA"), cvM = $("#cvM");
+const mk = () => document.createElement("canvas");
+const featherC = mk(), tmpC = mk(), dilC = mk(), greyC = mk();
+const strokeC = mk(), strokeFeatherC = mk();  // the stroke being painted now, for its own tint
+const g2 = (c, read) => c.getContext("2d", read ? { willReadFrequently: true } : undefined);
+function fit2(c, w, h) { if (c.width !== w || c.height !== h) { c.width = w; c.height = h; } }
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { "X-Token": TOKEN, ...(opts.headers || {}) } });
+  if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch {} throw new Error(m); }
+  return r;
+}
+const shortDev = d => (d || "").replace(/^NVIDIA\s+/, "").replace(/^GeForce\s+/, "");
+fetch("/api/info").then(r => r.json()).then(j => {
+  S.info = j;
+  $("#devName").textContent = "本机处理 · " + (j.device === "CPU" ? "CPU" : shortDev(j.device));
+  $("#devChip").hidden = false;
+  syncPanel();
+}).catch(() => {});
+
+/* ---------------- toasts & dialogs ---------------- */
+function toast(msg, kind = "", ms = 4200) {
+  const t = document.createElement("div");
+  t.className = "toast " + kind;
+  t.innerHTML = "<span></span><button aria-label='关闭'>×</button>";
+  t.firstChild.textContent = msg;
+  t.lastChild.onclick = () => t.remove();
+  $("#toasts").appendChild(t);
+  setTimeout(() => t.remove(), ms);
+}
+$("#helpBtn").onclick = () => $("#helpDlg").showModal();
+$("#helpClose").onclick = () => $("#helpDlg").close();
+$("#quitBtn").onclick = () => $("#quitDlg").showModal();
+$("#quitNo").onclick = () => $("#quitDlg").close();
+$("#quitYes").onclick = async () => {
+  $("#quitDlg").close();
+  try { await api("/api/quit", { method: "POST" }); } catch {}
+  const d = document.createElement("div"); d.className = "ended"; d.textContent = "去噪工具已结束，可以关闭这个页面了。"; document.body.appendChild(d);
+};
+for (const d of $$("dialog")) d.addEventListener("click", e => { if (e.target === d) d.close(); });
+
+/* ---------------- theme ---------------- */
+const THEMES = [["system", "跟随系统", "#i-auto"], ["light", "浅色", "#i-sun"], ["dark", "深色", "#i-moon"]];
+let theme = recall("theme", "system");
+function applyTheme() {
+  const t = THEMES.find(x => x[0] === theme) || THEMES[0];
+  if (theme === "system") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = theme;
+  $("#themeLabel").textContent = t[1];
+  $("#themeIcon").setAttribute("href", t[2]);
+  if (S.cur) drawOverlay(S.cur);
+}
+$("#themeBtn").onclick = () => { theme = THEMES[(THEMES.findIndex(x => x[0] === theme) + 1) % 3][0]; store("theme", theme); applyTheme(); };
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => S.cur && drawOverlay(S.cur));
+applyTheme();
+
+/* ---------------- adding images ---------------- */
+const pick = () => $("#fileInput").click();
+$("#fileInput").onchange = e => { if (e.target.files.length) addFiles(e.target.files); e.target.value = ""; };
+$("#emptyPick").onclick = $("#stripAdd").onclick = pick;
+let dragDepth = 0;
+const hasFiles = e => [...(e.dataTransfer?.types || [])].includes("Files");
+addEventListener("dragenter", e => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; $("#dropOverlay").hidden = false; });
+addEventListener("dragover", e => { if (hasFiles(e)) e.preventDefault(); });
+addEventListener("dragleave", e => { if (!hasFiles(e)) return; if (--dragDepth <= 0) { dragDepth = 0; $("#dropOverlay").hidden = true; } });
+addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; $("#dropOverlay").hidden = true; if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
+addEventListener("paste", e => {
+  const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/"));
+  if (files.length) { e.preventDefault(); addFiles(files, true); }
+});
+
+function loadImg(url) {
+  return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error("读不出这张图")); im.src = url; });
+}
+function makeThumb(img) {
+  const c = mk(), k = 128 / Math.max(img.naturalWidth, img.naturalHeight);
+  c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
+  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL("image/png");
+}
+// a pasted image has no name of its own; the paste time keeps a later session's auto-save from overwriting this one
+function pasteStamp(d = new Date()) {
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+async function addFiles(list, pasted) {
+  const files = [...list].filter(f => /^image\//.test(f.type) || /\.(png|jpe?g|jfif|webp|bmp|gif|tiff?|avif|tga)$/i.test(f.name));
+  if (!files.length) return toast("没有可用的图片（PNG / JPEG / WebP / BMP / GIF / TIFF / AVIF）", "err");
+  const stamp = pasteStamp();
+  let first = null;
+  for (const f of files) {
+    // the server decodes every format (EXIF rotation, 16-bit, CMYK, TIFF...) and returns a PNG:
+    // the page shows, blends and sends exactly these pixels, so the "original" always matches what was processed
+    let blob, url, img, hasAlpha = false;
+    try {
+      const r = await api("/api/convert", { method: "POST", body: f });
+      blob = await r.blob(); hasAlpha = r.headers.get("X-Alpha") === "1";
+      url = URL.createObjectURL(blob); img = await loadImg(url);
+    } catch (e) { if (url) URL.revokeObjectURL(url); toast(`${f.name || "图片"}：${e.message}`, "err", 6000); continue; }
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const id = nextId++;
+    const name = pasted || !f.name || f.name === "image.png" ? `粘贴的图片-${stamp}-${id}.png` : f.name;
+    const mask = mk(); mask.width = w; mask.height = h;
+    { const mc = mask.getContext("2d", { willReadFrequently: true }); mc.fillStyle = "#000"; mc.fillRect(0, 0, w, h); }
+    const it = { id, file: blob, hasAlpha, name, stem: name.replace(/\.[^.]+$/, ""), w, h, srcURL: url, srcImg: img, thumb: makeThumb(img),
+      params: { ...S.params }, feather: S.feather, result: null, status: "queued", err: "",
+      mask, hasMask: false, undo: [], redo: [], saved: "", saveTimer: 0 };
+    S.items.push(it);
+    first = first || it;
+    enqueue(it);
+  }
+  renderStrip();
+  if (first) select(first);
+}
+function removeItem(it) {
+  if (S.running === it) { it.again = false; it.removed = true; cancelRun(it); }
+  S.queue = S.queue.filter(x => x !== it);
+  const i = S.items.indexOf(it);
+  S.items.splice(i, 1);
+  URL.revokeObjectURL(it.srcURL);
+  if (it.result) URL.revokeObjectURL(it.result.url);
+  if (S.cur === it) { const n = S.items[Math.min(i, S.items.length - 1)]; n ? select(n) : clearSelection(); }
+  renderStrip();
+}
+function clearSelection() { S.cur = null; S.vp = null; setBrushMode(false); syncPanel(); render(); }
+
+/* ---------------- queue & denoise ---------------- */
+function enqueue(it, force) {
+  if (S.running === it) {
+    // the running job was started with other parameters: stop it now and start over with the new ones
+    if (force || !same(it.params, it.runParams)) { it.again = true; cancelRun(it); }
+    return;
+  }
+  if (!force && it.result && same(it.params, it.result.params)) return;
+  if (!S.queue.includes(it)) S.queue.push(it);
+  it.status = it.result ? it.status : "queued";
+  renderStrip(); syncPanel(); pump();
+}
+function cancelRun(it) {
+  if (!it.ctrl) return;
+  it.ctrl.abort();
+  api(`/api/cancel?job=${it.job}`, { method: "POST" }).catch(() => {});
+}
+async function pump() {
+  if (S.running) return;
+  const it = S.queue.shift();
+  if (!it) return;
+  S.running = it;
+  await runItem(it);
+  S.running = null;
+  if (it.again && !it.removed) { it.again = false; S.queue.unshift(it); it.status = it.result ? it.status : "queued"; }
+  pump();
+}
+let progTimer = 0;
+function startProgress(it, t0) {
+  clearInterval(progTimer);
+  progTimer = setInterval(async () => {
+    const s = (performance.now() - t0) / 1000;
+    it.elapsedLive = s;
+    if (S.cur === it) {
+      $("#prog").hidden = s < 0.3;
+      $("#progTime").textContent = s.toFixed(1) + " 秒";
+      if (s > 0.3) { try { const p = await (await fetch("/api/progress")).json(); if (p.stage) $("#progText").textContent = p.stage; } catch {} }
+      syncStatus();
+    } else $("#prog").hidden = true;
+  }, 150);
+}
+function stopProgress() { clearInterval(progTimer); $("#prog").hidden = true; $("#progText").textContent = "去噪中"; }
+async function runItem(it) {
+  const p = { ...it.params };
+  it.runParams = p;
+  it.job = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random())).replace(/-/g, "");
+  it.ctrl = new AbortController();
+  it.status = "running"; it.err = "";
+  renderStrip(); syncPanel(); render();
+  const t0 = performance.now();
+  startProgress(it, t0);
+  try {
+    const r = await api(`/api/denoise?down=${p.down / 100}&l0=${p.l0}&job=${it.job}`, { method: "POST", body: it.file, signal: it.ctrl.signal });
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const img = await loadImg(url);
+    if (it.removed) { URL.revokeObjectURL(url); return; }
+    if (it.result) URL.revokeObjectURL(it.result.url);
+    it.result = { img, url, blob, params: p, elapsed: +r.headers.get("X-Elapsed"), cached: r.headers.get("X-SR-Cached") === "1", device: r.headers.get("X-Device") };
+    it.hasAlpha = r.headers.get("X-Alpha") === "1";
+    it.status = "done";
+    if (S.cur === it) composite();
+    scheduleSave(it, 0);
+    if (!S.toldBrush) { S.toldBrush = true; store("toldBrush", true); toast("去噪完成。若有细节被抹掉，可以用「保护笔刷」把它涂回来。", "", 6500); }
+  } catch (e) {
+    if (e.name === "AbortError" || it.ctrl.signal.aborted) {
+      it.status = it.result ? "done" : "queued";  // stopped on purpose: no error, the re-run follows
+    } else {
+      it.status = it.result ? "done" : "error"; it.err = e.message;
+      toast(`${it.name}：${e.message}`, "err", 7000);
+    }
+  } finally {
+    it.ctrl = null; it.runParams = null;
+    stopProgress();
+    renderStrip(); syncPanel(); render();
+  }
+}
+
+/* ---------------- compositing ---------------- */
+function maskRGB() { return getComputedStyle(document.documentElement).getPropertyValue("--mask").trim() || "185, 71, 47"; }
+function featherOf(src, w, h, f, out) {
+  // src is opaque grey: brightness = restore strength (black = untouched); out gets alpha = feathered weight
+  fit2(out, w, h); fit2(greyC, w, h);
+  const gc = g2(greyC);
+  gc.globalCompositeOperation = "source-over"; gc.fillStyle = "#000"; gc.fillRect(0, 0, w, h);
+  if (f > 0) {
+    // grow each stroke by r = f/2 keeping the brighter value where copies overlap (a grey "dilate"), then blur by r/2:
+    // weight stays ~98% of the stroke's strength at its edge for any width and fades to 0 about f px outside
+    const r = f / 2;
+    fit2(dilC, w, h);
+    const dc = g2(dilC);
+    dc.globalCompositeOperation = "source-over"; dc.drawImage(src, 0, 0);
+    dc.globalCompositeOperation = "lighten";
+    for (const [k, n] of [[1 / 3, 8], [2 / 3, 12], [1, 16]])
+      for (let i = 0; i < n; i++) { const a = 2 * Math.PI * i / n + k; dc.drawImage(src, Math.cos(a) * r * k, Math.sin(a) * r * k); }
+    dc.globalCompositeOperation = "source-over";
+    gc.filter = `blur(${r / 2}px)`; gc.drawImage(dilC, 0, 0); gc.filter = "none";
+    gc.globalCompositeOperation = "lighten";
+  }
+  gc.drawImage(src, 0, 0);  // painted pixels: exactly their own strength
+  gc.globalCompositeOperation = "source-over";
+  const oc = g2(out);
+  oc.clearRect(0, 0, w, h);
+  oc.filter = "url(#g2a)"; oc.drawImage(greyC, 0, 0); oc.filter = "none";  // alpha = weight
+}
+function buildFeather(it) { featherOf(it.mask, it.w, it.h, it.feather, featherC); }
+// final pixels = denoised * (1 - m) + original * m, m = feathered mask weight (each stroke carries its own strength)
+function blendInto(it, out) {
+  fit2(out, it.w, it.h);
+  const oc = g2(out, it.hasAlpha);
+  oc.clearRect(0, 0, it.w, it.h);
+  if (!it.result) { oc.drawImage(it.srcImg, 0, 0); return; }
+  const k = it.hasMask ? 1 : 0;
+  if (k > 0 && it.hasAlpha) {  // exact per-pixel blend so semi-transparent pixels keep the original alpha
+    fit2(tmpC, it.w, it.h);
+    const tc = g2(tmpC, true);
+    tc.clearRect(0, 0, it.w, it.h); tc.drawImage(it.srcImg, 0, 0);
+    const so = tc.getImageData(0, 0, it.w, it.h).data;
+    tc.clearRect(0, 0, it.w, it.h); tc.drawImage(it.result.img, 0, 0);
+    const od = tc.getImageData(0, 0, it.w, it.h);
+    const d = od.data, m = g2(featherC, true).getImageData(0, 0, it.w, it.h).data;
+    for (let i = 0; i < d.length; i += 4) {
+      const a = m[i + 3] / 255 * k;
+      if (a) { d[i] += (so[i] - d[i]) * a; d[i + 1] += (so[i + 1] - d[i + 1]) * a; d[i + 2] += (so[i + 2] - d[i + 2]) * a; }
+      d[i + 3] = so[i + 3];
+    }
+    oc.putImageData(od, 0, 0);
+    return;
+  }
+  oc.drawImage(it.result.img, 0, 0);
+  if (k > 0) {
+    fit2(tmpC, it.w, it.h);
+    const tc = g2(tmpC);
+    tc.globalCompositeOperation = "source-over"; tc.clearRect(0, 0, it.w, it.h);
+    tc.drawImage(it.srcImg, 0, 0);
+    tc.globalCompositeOperation = "destination-in"; tc.drawImage(featherC, 0, 0);
+    tc.globalCompositeOperation = "source-over";
+    oc.globalAlpha = k; oc.drawImage(tmpC, 0, 0); oc.globalAlpha = 1;
+  }
+}
+// overlay = the feathered weight as a soft tint (no outline): its depth shows each stroke's strength
+function drawOverlay(it, which = S.overlayWhich || "all") {
+  fit2(cvM, it.w, it.h);
+  const mc = g2(cvM);
+  mc.globalCompositeOperation = "source-over"; mc.clearRect(0, 0, it.w, it.h);
+  S.overlayWhich = which; S.overlayFor = it;
+  let src = featherC;
+  if (which === "stroke") {
+    if (strokeC.width !== it.w || strokeC.height !== it.h) return;
+    featherOf(strokeC, it.w, it.h, it.feather, strokeFeatherC);
+    src = strokeFeatherC;
+  } else if (!it.hasMask) return;
+  mc.filter = "url(#sqrtA)"; mc.drawImage(src, 0, 0); mc.filter = "none";  // display only: sqrt keeps weak strokes readable
+  mc.globalCompositeOperation = "source-in";
+  mc.fillStyle = `rgba(${maskRGB()}, 0.6)`; mc.fillRect(0, 0, it.w, it.h);  // deeper tint = stronger restore
+  mc.globalCompositeOperation = "source-over";
+}
+function composite() {
+  const it = S.cur;
+  if (!it) return;
+  buildFeather(it);
+  blendInto(it, cvA);
+  // keep whatever the tint layer is showing (e.g. the last stroke while it fades out); only render() switches it,
+  // otherwise a re-composite (auto-save, slider) would swap in the whole mask mid-fade and flash it
+  drawOverlay(it, S.overlayFor === it ? S.overlayWhich : "all");
+  render();
+}
+let rafPending = false;
+function scheduleComposite() { if (!rafPending) { rafPending = true; requestAnimationFrame(() => { rafPending = false; composite(); }); } }
+
+/* ---------------- saving & downloading ---------------- */
+function outName(it) {
+  const p = it.result.params;
+  let tag = same(p, PRESETS.recommended) ? "" : `_s${p.down}_l0-${fmtL0(p.l0)}`;
+  if (it.hasMask) tag += "_protected";
+  return `${it.stem}_denoise${tag}.png`;
+}
+function finalBlob(it) {
+  if (!it.hasMask) return Promise.resolve(it.result.blob);
+  let c = cvA;
+  if (it !== S.cur) { buildFeather(it); c = mk(); blendInto(it, c); if (S.cur) buildFeather(S.cur); }
+  else composite();
+  return new Promise(res => c.toBlob(res, "image/png"));
+}
+function scheduleSave(it, delay = 700) {
+  if (!it.result) return;
+  clearTimeout(it.saveTimer);
+  if (it === S.cur) $("#bSaved").textContent = "保存中…";
+  it.saveTimer = setTimeout(() => saveItem(it), delay);
+}
+async function saveItem(it) {
+  if (!it.result) return;
+  try {
+    const name = outName(it);
+    const blob = await finalBlob(it);
+    const j = await (await api(`/api/save?name=${encodeURIComponent(name)}`, { method: "POST", body: blob })).json();
+    it.saved = j.file;
+  } catch (e) { it.saved = ""; toast("自动保存失败：" + e.message, "err"); }
+  if (it === S.cur) { $("#bSaved").textContent = it.saved ? "已保存" : ""; syncPanel(); }
+}
+async function download() {
+  const it = S.cur;
+  if (!it || !it.result) return;
+  const blob = await finalBlob(it);
+  const a = document.createElement("a"), u = URL.createObjectURL(blob);
+  a.href = u; a.download = outName(it); a.click();
+  setTimeout(() => URL.revokeObjectURL(u), 5000);
+}
+$("#dlBtn").onclick = download;
+const reveal = name => api("/api/reveal" + (name ? `?name=${encodeURIComponent(name)}` : ""), { method: "POST" }).catch(e => toast(e.message, "err"));
+$("#openOut").onclick = () => reveal("");
+$("#revealBtn").onclick = () => reveal(S.cur?.saved || "");
+
+/* ---------------- panel ---------------- */
+function presetOf(p) { return Object.keys(PRESETS).find(k => same(PRESETS[k], p)); }
+function paintRange(el) { el.style.setProperty("--p", ((el.value - el.min) / (el.max - el.min) * 100) + "%"); }
+function syncParams() {
+  const p = S.cur ? S.cur.params : S.params, key = presetOf(p);
+  for (const b of $$("[data-preset]")) b.setAttribute("aria-checked", b.dataset.preset === key);
+  $("#paramPill").textContent = "自定义";
+  $("#paramPill").className = "pill accent";
+  $("#paramPill").hidden = !!key;
+  $("#presetHint").textContent = key ? PRESETS[key].hint : "自定义参数：用下面的滑条微调，松手就重新去噪。";
+  $("#down").value = p.down; $("#l0").value = p.l0;
+  $("#downOut").textContent = p.down + "%"; $("#l0Out").textContent = fmtL0(p.l0);
+  paintRange($("#down")); paintRange($("#l0"));
+}
+function setParams(p, run = true) {
+  p = { down: p.down, l0: +(+p.l0).toFixed(4) };
+  S.params = p; store("params", p);
+  if (S.cur) { S.cur.params = { ...p }; if (run) enqueue(S.cur); }
+  syncParams();
+}
+$$("[data-preset]").forEach(b => b.onclick = () => setParams(PRESETS[b.dataset.preset]));
+for (const id of ["down", "l0"]) {
+  $("#" + id).addEventListener("input", e => {
+    const v = +e.target.value;
+    if (id === "down") $("#downOut").textContent = v + "%"; else $("#l0Out").textContent = fmtL0(v);
+    paintRange(e.target);
+  });
+  $("#" + id).addEventListener("change", () => setParams({ down: +$("#down").value, l0: +$("#l0").value }));
+}
+$("#resetParams").onclick = () => setParams(PRESETS.recommended);
+
+function syncStatus() {
+  const it = S.cur, el = $("#fStatus");
+  if (!it) { el.hidden = true; return; }
+  el.hidden = false;
+  let cls = "", txt = "";
+  if (it.status === "running") { cls = "run"; txt = `去噪中 · ${(it.elapsedLive || 0).toFixed(1)} 秒`; }
+  else if (it.status === "queued") { txt = `排队中（前面还有 ${Math.max(0, S.queue.indexOf(it)) + (S.running ? 1 : 0)} 张）`; }
+  else if (it.status === "error") { cls = "err"; txt = "出错：" + it.err; }
+  else if (it.result) {
+    cls = "ok";
+    const r = it.result;
+    txt = `已完成 · ${r.elapsed.toFixed(1)} 秒${r.cached ? " · 复用超分结果" : ""}`;
+    if (!same(it.params, r.params)) { cls = "run"; txt = "参数已改，等待重新去噪…"; }
+  }
+  el.className = "status " + cls;
+  $("#fStatusText").textContent = txt;
+}
+function syncPanel() {
+  const it = S.cur;
+  $("#fThumb").hidden = !it; $("#fThumbBlank").hidden = !!it;
+  if (it) { $("#fThumb").src = it.thumb; $("#fName").textContent = it.name; $("#fName").title = it.name; }
+  else { $("#fName").textContent = "还没有图片"; }
+  $("#fDims").textContent = it ? `${it.w} × ${it.h}${it.hasAlpha ? " · 透明背景" : ""}` : "拖进窗口，或按 Ctrl+O 选择";
+  syncStatus();
+  syncParams();
+  const ready = !!(it && it.result);
+  $("#dlBtn").disabled = !ready;
+  $("#revealBtn").disabled = !(it && it.saved);
+  $("#brushBtn").disabled = !it;
+  const inBrush = S.brushMode && S.tool !== "lasso", inLasso = S.brushMode && S.tool === "lasso";  // two separate tools
+  $("#brushBtn").classList.toggle("on", inBrush);
+  $("#brushBtnText").textContent = inBrush ? "完成涂抹" : "保护笔刷";
+  $("#brushKbd").textContent = "B";
+  const masked = !!(it && it.hasMask);
+  $("#protectPill").textContent = masked ? "使用中" : "未使用";
+  $("#protectPill").className = "pill" + (masked ? " accent" : "");
+  $("#protectSum").hidden = !masked;
+  if (masked) $("#protectSumText").textContent = `已涂保护区 · 新笔画 ${S.mix}% · 柔边 ${it.feather} px`;
+  const fn = $("#footNote");
+  fn.textContent = "";
+  if (it && it.saved) {
+    fn.append("已自动保存：");
+    const b = document.createElement("span"); b.className = "flink"; b.tabIndex = 0; b.setAttribute("role", "button");
+    b.textContent = it.saved; b.title = "在文件夹中显示"; b.onclick = () => reveal(it.saved);
+    b.onkeydown = e => { if (e.key === "Enter") reveal(it.saved); };
+    fn.append(b);
+  } else fn.textContent = "结果会自动保存到 outputs 文件夹";
+  $("#bUndo").disabled = !(it && it.undo.length);
+  $("#bRedo").disabled = !(it && it.redo.length);
+  $("#bClear").disabled = !masked;
+  $("#lassoBtn").disabled = !it;
+  $("#lassoBtn").classList.toggle("on", inLasso);
+  $("#lassoBtnText").textContent = inLasso ? "完成套索" : "磁性套索";
+  $("#invertBtn").disabled = $("#bInvert").disabled = !masked;
+  $("#bSaved").textContent = it && it.saved && S.brushMode ? "已保存" : $("#bSaved").textContent;
+}
+
+/* ---------------- strip ---------------- */
+function renderStrip() {
+  const box = $("#stripItems");
+  box.textContent = "";
+  for (const it of S.items) {
+    const d = document.createElement("div");
+    d.className = "sitem" + (it === S.cur ? " cur" : "");
+    d.title = it.name;
+    const img = document.createElement("img"); img.src = it.thumb; img.alt = it.name; d.appendChild(img);
+    const b = document.createElement("span"); b.className = "sbadge";
+    if (it.status === "running") { b.classList.add("run"); b.innerHTML = '<span class="spin"></span>'; }
+    else if (it.status === "queued") { b.classList.add("wait"); b.textContent = S.queue.indexOf(it) + 1; b.title = "排队中"; }
+    else if (it.status === "error") { b.classList.add("err"); b.textContent = "!"; b.title = it.err; }
+    else if (it.result) { b.classList.add("ok"); b.textContent = "✓"; }
+    if (b.className !== "sbadge") d.appendChild(b);
+    if (it.hasMask) { const m = document.createElement("span"); m.className = "sbadge mask"; m.title = "已涂保护区"; m.innerHTML = '<svg class="i" style="width:11px;height:11px"><use href="#i-shield"/></svg>'; d.appendChild(m); }
+    const x = document.createElement("button"); x.className = "sdel"; x.textContent = "×"; x.title = "移除";
+    x.onclick = e => { e.stopPropagation(); removeItem(it); };
+    d.appendChild(x);
+    d.onclick = () => select(it);
+    box.appendChild(d);
+  }
+  const done = S.items.filter(i => i.result).length;
+  $("#stripNote").textContent = S.items.length > 1 ? `${done} / ${S.items.length} 张完成` : "";
+}
+function select(it) {
+  if (S.cur === it) return;
+  if (S.brushMode && S.cur) endStroke();
+  lassoFinish();  // keep an open outline on the image being left, like a brush stroke
+  S.cur = it;
+  imgB.src = it.srcURL;
+  for (const c of [cvA, cvM]) fit2(c, it.w, it.h);
+  syncBrushUI();
+  composite();
+  fit();
+  syncPanel(); renderStrip();
+}
+function step(d) {
+  if (!S.cur || S.items.length < 2) return;
+  const i = (S.items.indexOf(S.cur) + d + S.items.length) % S.items.length;
+  select(S.items[i]);
+}
+
+/* ---------------- view ---------------- */
+function fit() {
+  const it = S.cur;
+  if (!it) return render();
+  const W = stage.clientWidth, H = stage.clientHeight, pad = 28;
+  const s = Math.min((W - pad * 2) / it.w, (H - pad * 2) / it.h);
+  S.vp = { s, x: (W - it.w * s) / 2, y: (H - it.h * s) / 2 };
+  S.lastFit = { ...S.vp };
+  render();
+}
+function zoomAt(f, cx, cy, abs) {
+  if (!S.vp) return;
+  cx ??= stage.clientWidth / 2; cy ??= stage.clientHeight / 2;
+  const s = Math.min(16, Math.max(0.05, abs ? f : S.vp.s * f));
+  S.vp.x = cx - (cx - S.vp.x) * s / S.vp.s; S.vp.y = cy - (cy - S.vp.y) * s / S.vp.s; S.vp.s = s;
+  render(); updateCursor();
+}
+function render() {
+  const it = S.cur, has = !!(it && S.vp);
+  stage.classList.toggle("has", has);
+  stage.classList.toggle("paint", has && S.brushMode && !S.space && S.tool !== "lasso");
+  stage.classList.toggle("lasso", has && S.brushMode && !S.space && S.tool === "lasso");
+  // Space held: hand to pan; once the wheel is used it becomes "resize" and only the brush circle shows
+  stage.classList.toggle("space", has && S.space && S.spaceMode !== "size");
+  stage.classList.toggle("sizing", has && S.spaceMode === "size");
+  stage.classList.toggle("brushing", has && S.brushMode);
+  $("#empty").hidden = !!it;
+  for (const id of ["#frame", "#tagL", "#tagR", "#div"]) $(id).hidden = !has;
+  for (const id of ["#Lb", "#La", "#Lm"]) $(id).style.display = has ? "" : "none";
+  $("#zPct").textContent = has ? Math.round(S.vp.s * 100) + "%" : "—";
+  const hasOut = !!(it && it.result);
+  for (const b of $$("#viewSeg button")) { b.classList.toggle("on", b.dataset.v === S.view); b.disabled = !hasOut && b.dataset.v !== "before"; }
+  if (!has) { $("#baseSeg").hidden = true; $("#viewHint").textContent = ""; lassoDraw(); return; }
+  const { s, x, y } = S.vp, W = stage.clientWidth;
+  const tf = `translate(${x}px, ${y}px) scale(${s})`;
+  for (const el of [imgB, cvA, cvM]) { el.style.width = it.w + "px"; el.style.height = it.h + "px"; el.style.transform = tf; el.classList.toggle("px", s >= 2); }
+  Object.assign($("#frame").style, { left: x + "px", top: y + "px", width: it.w * s + "px", height: it.h * s + "px" });
+  const m = S.peekOrig ? "before" : (hasOut ? S.view : "before");
+  const leftDen = m === "cmp" && S.base === "den" && it.hasMask;
+  const want = leftDen ? it.result.url : it.srcURL;
+  if (imgB.getAttribute("src") !== want) imgB.src = want;
+  $("#Lb").style.display = m === "after" ? "none" : "";
+  $("#La").style.display = m === "before" ? "none" : "";
+  $("#La").style.clipPath = m === "cmp" ? `inset(0 0 0 ${S.split * W}px)` : "none";
+  $("#div").hidden = m !== "cmp";
+  $("#div").style.left = S.split * 100 + "%";
+  $("#knob").setAttribute("aria-valuenow", Math.round(S.split * 100));
+  $("#tagL").hidden = m === "after"; $("#tagR").hidden = m === "before";
+  const waiting = it.status === "running" ? " · 去噪中" : it.status === "queued" ? " · 排队中" : "";
+  const flipHint = hasOut && m !== "cmp" && !S.peekOrig ? " · X 切换" : "";
+  $("#tagL").textContent = leftDen ? "未保护结果" : "原图" + (hasOut ? flipHint : waiting);
+  $("#tagR").textContent = (it.hasMask ? "结果 · 含保护" : "结果") + flipHint;
+  const showAll = S.peekMask || S.flashAll || (S.brushMode && S.eyeMode === "always") || (S.painting && strokeTool === "erase");
+  const showStroke = !showAll && (S.painting || S.flash) && strokeTool === "brush";
+  const tintWant = showAll ? "all" : showStroke ? "stroke" : null;
+  if (tintWant && (S.overlayWhich !== tintWant || S.overlayFor !== it)) drawOverlay(it, tintWant);
+  const showMask = !S.peekOrig && ((showAll && it.hasMask) || showStroke);
+  $("#Lm").classList.toggle("show", showMask);
+  $("#baseSeg").hidden = !(hasOut && it.hasMask && m === "cmp");
+  for (const b of $$("#baseSeg button")) b.classList.toggle("on", b.dataset.b === S.base);
+  $("#viewHint").textContent = !hasOut ? "还没去噪完，先显示原图" : m === "cmp" ? `左：${leftDen ? "未保护结果" : "原图"}　右：${it.hasMask ? "结果（含保护）" : "结果"}` : m === "before" ? "原图" : "结果 · 就是下载的那张";
+  lassoDraw();
+}
+$$("#viewSeg button").forEach(b => b.onclick = () => { S.view = b.dataset.v; render(); });
+$$("#baseSeg button").forEach(b => b.onclick = () => { S.base = b.dataset.b; render(); });
+$("#zFit").onclick = fit; $("#z11").onclick = () => zoomAt(1, null, null, true);
+$("#zIn").onclick = () => zoomAt(1.25); $("#zOut").onclick = () => zoomAt(0.8);
+let sizeTipTimer = 0;
+function setBrushSize(v, showTip) {
+  S.brush = Math.round(Math.min(300, Math.max(2, v)));
+  syncBrushUI(); updateCursor();
+  const at = S.spaceMode === "size" ? S.sizeAt : cursorPt;
+  if (showTip && at) {
+    const tip = $("#sizeTip");
+    tip.textContent = `${S.brush} px`;
+    tip.style.left = at[0] + "px"; tip.style.top = (at[1] - Math.max(10, S.brush * S.vp.s / 2) - 10) + "px";
+    tip.hidden = false;
+    clearTimeout(sizeTipTimer);
+    if (S.spaceMode !== "size") sizeTipTimer = setTimeout(() => { tip.hidden = true; }, 700);  // [ ] keys
+  }
+}
+stage.addEventListener("wheel", e => {
+  if (onUI(e)) return;
+  e.preventDefault();
+  const r = stage.getBoundingClientRect();
+  if (S.space && S.brushMode) {  // hold Space + wheel: fine brush size control (~6% per notch, at least 1 px)
+    const up = e.deltaY < 0, d = Math.max(1, Math.round(S.brush * 0.06));
+    if (S.spaceMode !== "size") { S.spaceMode = "size"; S.sizeAt = cursorPt || [r.width / 2, r.height / 2]; render(); }
+    setBrushSize(S.brush + (up ? d : -d), true);
+    return;
+  }
+  zoomAt(e.deltaY < 0 ? 1.2 : 1 / 1.2, e.clientX - r.left, e.clientY - r.top);
+}, { passive: false });
+stage.addEventListener("dblclick", e => {
+  if (onUI(e)) return;
+  if (L.on) lassoClose(e.altKey);
+  else if (!S.brushMode) fit();
+});
+new ResizeObserver(() => {
+  if (!S.vp) return render();
+  const f = S.lastFit, v = S.vp;
+  f && Math.abs(v.s - f.s) < 1e-9 && Math.abs(v.x - f.x) < .5 && Math.abs(v.y - f.y) < .5 ? fit() : render();
+}).observe(stage);
+$("#knob").addEventListener("keydown", e => {
+  const d = { ArrowLeft: -0.02, ArrowRight: 0.02, Home: -1, End: 1 }[e.key];
+  if (d === undefined) return;
+  e.preventDefault(); e.stopPropagation();
+  S.split = Math.min(1, Math.max(0, Math.abs(d) === 1 ? (d < 0 ? 0 : 1) : S.split + d)); render();
+});
+
+/* ---------------- brush ---------------- */
+function syncBrushUI() {
+  const it = S.cur;
+  $("#bSize").value = S.brush; $("#bSizeOut").textContent = S.brush;
+  $("#bMix").value = S.mix; $("#bMixOut").textContent = S.mix + "%";
+  $("#bFeather").value = it ? it.feather : S.feather; $("#bFeatherOut").textContent = (it ? it.feather : S.feather);
+  for (const id of ["#bSize", "#bMix", "#bFeather"]) paintRange($(id));
+  for (const b of $$("#brushbar [data-t]")) b.classList.toggle("on", b.dataset.t === S.tool);
+  const always = S.eyeMode === "always";
+  $("#bEye").classList.toggle("on", always);
+  $("#bEyeIcon").setAttribute("href", always ? "#i-eye" : "#i-eye-auto");
+  $("#bEye").title = always ? "一直显示涂抹范围（点击改成涂完自动隐藏）；按住 M 看全部涂抹" : "涂完自动隐藏范围（点击改成一直显示）；按住 M 看全部涂抹";
+  $("#brushCur").classList.toggle("erase", S.tool === "erase");
+  const lasso = S.tool === "lasso";
+  // the lasso fills an outline, so brush size does not apply: grey it out but keep its place, so the tool buttons don't move
+  $("#bSizeField").classList.toggle("off", lasso); $("#bSize").disabled = lasso;
+  $("#bDone").title = lasso ? "完成套索（L）：没闭合的选框会自动闭合并填好；Esc 放弃选框" : "完成涂抹（B 或 Esc）";
+  $("#brushTip").textContent = lasso
+    ? "沿轮廓移动自动吸附 · 单击加锚点 · 回起点单击 / 双击 / 回车闭合 · Alt 或右键闭合 = 减去 · ⌫ 删锚点 · L / 完成 = 闭合并退出 · Esc 放弃"
+    : "涂到的地方混回原图 · 右键拖动擦除 · 按住空格：拖动画面 / 滚轮调笔刷大小 · 按住 M 看全部涂抹";
+  $("#lassoBtn").classList.toggle("on", S.brushMode && lasso);
+}
+function setBrushMode(on, tool) {
+  if (on && !S.cur) return;
+  S.brushMode = on;
+  if (tool) S.tool = tool;
+  if (!on || S.tool !== "lasso") lassoFinish();
+  $("#brushbar").hidden = !on; $("#brushTip").hidden = !on;
+  if (on) { $("#bSaved").textContent = S.cur?.saved ? "已保存" : ""; }
+  syncBrushUI(); syncPanel(); render(); updateCursor();
+}
+$("#brushBtn").onclick = () => S.brushMode && S.tool !== "lasso" ? setBrushMode(false) : setBrushMode(true, S.tool === "lasso" ? "brush" : S.tool);
+$("#bDone").onclick = () => setBrushMode(false);
+$$("#brushbar [data-t]").forEach(b => b.onclick = () => { S.tool = b.dataset.t; if (S.tool !== "lasso") lassoFinish(); syncBrushUI(); syncPanel(); render(); updateCursor(); });
+$("#lassoBtn").onclick = () => S.brushMode && S.tool === "lasso" ? setBrushMode(false) : setBrushMode(true, "lasso");
+$("#invertBtn").onclick = $("#bInvert").onclick = () => invertMask();
+$("#bEye").onclick = () => {
+  S.eyeMode = S.eyeMode === "always" ? "auto" : "always"; store("eyeMode", S.eyeMode);
+  toast(S.eyeMode === "always" ? "涂抹范围：一直显示" : "涂抹范围：涂完自动隐藏（按住 M 看全部）", "", 2200);
+  syncBrushUI(); render();
+};
+$("#bSize").addEventListener("input", e => { S.brush = +e.target.value; syncBrushUI(); updateCursor(); });
+$("#bMix").addEventListener("input", e => { S.mix = +e.target.value; syncBrushUI(); syncPanel(); updateCursor(); });  // only affects new strokes
+$("#bFeather").addEventListener("input", e => { const it = S.cur; S.feather = +e.target.value; if (it) { it.feather = S.feather; scheduleComposite(); scheduleSave(it); } syncBrushUI(); syncPanel(); });
+function snapshot(it) { return { data: g2(it.mask, true).getImageData(0, 0, it.w, it.h), has: it.hasMask }; }
+function pushUndo(it) { it.undo.push(snapshot(it)); if (it.undo.length > 20) it.undo.shift(); it.redo = []; }
+function restore(it, from, to) {
+  const u = from.pop();
+  if (!u) return;
+  to.push(snapshot(it));
+  g2(it.mask, true).putImageData(u.data, 0, 0); it.hasMask = u.has;
+  composite(); scheduleSave(it); syncPanel(); renderStrip();
+}
+const undo = () => S.cur && restore(S.cur, S.cur.undo, S.cur.redo);
+const redo = () => S.cur && restore(S.cur, S.cur.redo, S.cur.undo);
+$("#bUndo").onclick = undo; $("#bRedo").onclick = redo;
+function clearMask() {
+  const it = S.cur;
+  if (!it || !it.hasMask) return;
+  pushUndo(it); { const c = g2(it.mask, true); c.fillStyle = "#000"; c.fillRect(0, 0, it.w, it.h); } it.hasMask = false;
+  composite(); scheduleSave(it); syncPanel(); renderStrip();
+  toast("已清除保护区（Ctrl+Z 可撤销）");
+}
+$("#bClear").onclick = $("#clearMask").onclick = clearMask;
+function hasPixels(it) {
+  const d = g2(it.mask, true).getImageData(0, 0, it.w, it.h).data;
+  for (let i = 0; i < d.length; i += 4) if (d[i]) return true;  // any non-black grey
+  return false;
+}
+let lastPt = null, strokeTool = "brush";
+function strokeTo(pt) {
+  const it = S.cur, c = g2(it.mask, true);
+  const v = strokeTool === "erase" ? 0 : Math.round(S.mix * 2.55);
+  c.globalCompositeOperation = "source-over";
+  c.strokeStyle = c.fillStyle = `rgb(${v},${v},${v})`;  // sets this stroke's strength; overlapping strokes replace, not stack
+  c.lineWidth = S.brush; c.lineCap = c.lineJoin = "round";
+  const sc = g2(strokeC);  // same segment into the current-stroke canvas (only used for its tint)
+  sc.strokeStyle = sc.fillStyle = c.fillStyle; sc.lineWidth = S.brush; sc.lineCap = sc.lineJoin = "round";
+  for (const g of [c, sc]) {
+    if (!lastPt) { g.beginPath(); g.arc(pt[0], pt[1], S.brush / 2, 0, Math.PI * 2); g.fill(); }
+    else { g.beginPath(); g.moveTo(lastPt[0], lastPt[1]); g.lineTo(pt[0], pt[1]); g.stroke(); }
+  }
+  c.globalCompositeOperation = "source-over";
+  lastPt = pt;
+  if (strokeTool === "brush") it.hasMask = true;
+  scheduleComposite();
+}
+function endStroke() {
+  if (!S.painting) return;
+  S.painting = false; lastPt = null;
+  const it = S.cur;
+  it.hasMask = hasPixels(it);
+  if (S.eyeMode === "auto" && strokeTool === "brush") {  // keep this stroke's tint a moment after lifting, then fade
+    S.flash = true; clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => { S.flash = false; render(); }, 700);
+  }
+  composite(); scheduleSave(it); syncPanel(); renderStrip();
+}
+let flashTimer = 0, flashAllTimer = 0;
+function flashAll(ms) {  // briefly show the whole protected area (after an invert or a lasso subtraction)
+  if (S.eyeMode === "always") return render();
+  S.flashAll = true; clearTimeout(flashAllTimer); render();
+  flashAllTimer = setTimeout(() => { S.flashAll = false; render(); }, ms);
+}
+
+/* ---------------- invert ---------------- */
+// Swaps protected and denoised areas, keeping the strength the user chose: grey v -> max - v.
+// Lasso the character -> only the background is denoised; invert -> only the character is.
+function invertMask() {
+  const it = S.cur;
+  if (!it) return;
+  lassoFinish();  // an outline still open is what the user means to invert
+  if (!it.hasMask) return toast("还没有保护区：先用磁性套索圈住人物（或用笔刷涂），再反选", "", 3800);
+  const c = g2(it.mask, true), im = c.getImageData(0, 0, it.w, it.h), d = im.data;
+  let max = 0;
+  for (let i = 0; i < d.length; i += 4) if (d[i] > max) max = d[i];
+  pushUndo(it);
+  for (let i = 0; i < d.length; i += 4) { const v = max - d[i]; d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255; }
+  c.putImageData(im, 0, 0);
+  it.hasMask = hasPixels(it);
+  composite(); scheduleSave(it); syncPanel(); renderStrip();
+  flashAll(1200);
+  toast(it.hasMask ? "已反选：原来去噪的地方改为保持原图，原来保持原图的地方改为去噪（Ctrl+Z 可撤销）" : "反选后没有保护区了（整张都已保护时反选 = 整张去噪）", "", 4200);
+}
+
+/* ---------------- magnetic lasso ---------------- */
+// Live-wire ("intelligent scissors"): the outline from the last anchor to the cursor is the cheapest route over an
+// edge-cost map, so it hugs the strongest nearby contour. Anchors drop automatically as the cursor travels.
+// Closing fills the outline into the protect mask at the current "恢复原图" strength (Alt / right click: subtract).
+const L = { on: false, it: null, pts: [], anchors: [], live: [], want: null, near: false, raf: 0 };
+function blur3(a, w, h) {
+  const t = new Uint16Array(a.length), o = new Uint8Array(a.length);
+  for (let y = 0; y < h; y++) {
+    const r = y * w;
+    for (let x = 0; x < w; x++) { const i = r + x; t[i] = a[i] + a[x > 0 ? i - 1 : i] + a[x < w - 1 ? i + 1 : i]; }
+  }
+  for (let y = 0; y < h; y++) {
+    const u = y > 0 ? -w : 0, dn = y < h - 1 ? w : 0, r = y * w;
+    for (let x = 0; x < w; x++) { const i = r + x; o[i] = (t[i] + t[i + u] + t[i + dn]) / 9; }
+  }
+  return o;
+}
+function edgeMap(it) {
+  // the denoised result has clean outlines; the original still has the texture noise this tool removes
+  const src = it.result ? it.result.img : it.srcImg;
+  if (it.edge && it.edge.src === src) return it.edge.e;
+  const w = it.w, h = it.h, n = w * h;
+  const c = mk(); c.width = w; c.height = h;
+  const cc = c.getContext("2d", { willReadFrequently: true });
+  cc.drawImage(src, 0, 0);
+  const d = cc.getImageData(0, 0, w, h).data;
+  const lum = new Uint8Array(n), alp = new Uint8Array(n);
+  for (let i = 0, j = 0; i < n; i++, j += 4) {
+    const a = d[j + 3];
+    alp[i] = a;
+    lum[i] = ((d[j] * 77 + d[j + 1] * 150 + d[j + 2] * 29) >> 8) * a / 255;
+  }
+  const bl = blur3(lum, w, h), e = new Uint8Array(n);
+  const sob = (p, i) => {
+    const t = i - w, b = i + w;
+    const gx = p[t + 1] + 2 * p[i + 1] + p[b + 1] - p[t - 1] - 2 * p[i - 1] - p[b - 1];
+    const gy = p[b - 1] + 2 * p[b] + p[b + 1] - p[t - 1] - 2 * p[t] - p[t + 1];
+    return Math.abs(gx) + Math.abs(gy);
+  };
+  for (let y = 1; y < h - 1; y++)
+    for (let x = 1, i = y * w + 1; x < w - 1; x++, i++) e[i] = Math.min(255, Math.max(sob(bl, i), sob(alp, i)) / 4);  // transparent edges count too
+  it.edge = { src, e };
+  return e;
+}
+function liveWire(e, w, h, a, b) {
+  // Dijkstra over a window around the two points; returns [x0, y0, x1, y1, ...] from a to b
+  const m = 24;
+  const x0 = Math.max(0, Math.min(a[0], b[0]) - m), y0 = Math.max(0, Math.min(a[1], b[1]) - m);
+  const x1 = Math.min(w - 1, Math.max(a[0], b[0]) + m), y1 = Math.min(h - 1, Math.max(a[1], b[1]) + m);
+  const W = x1 - x0 + 1, H = y1 - y0 + 1, N = W * H;
+  if (N > 1.5e6) return [a[0], a[1], b[0], b[1]];  // a huge jump: draw it straight rather than freeze
+  let mx = 1;  // local normalisation: the strongest edge in view is cheapest, so faint outlines still attract
+  for (let y = y0; y <= y1; y++) for (let x = x0, i = y * w + x0; x <= x1; x++, i++) if (e[i] > mx) mx = e[i];
+  const cost = new Float32Array(N);
+  for (let y = 0; y < H; y++)
+    for (let x = 0, i = (y + y0) * w + x0, k = y * W; x < W; x++, i++, k++) { const f = 1 - e[i] / mx; cost[k] = 0.1 + f * f; }
+  const dist = new Float32Array(N).fill(Infinity), prev = new Int32Array(N).fill(-1), done = new Uint8Array(N);
+  const s = (a[1] - y0) * W + a[0] - x0, t = (b[1] - y0) * W + b[0] - x0;
+  let hk = new Float32Array(1024), hv = new Int32Array(1024), hn = 0;
+  const push = (v, k) => {
+    if (hn === hk.length) { const k2 = new Float32Array(hn * 2), v2 = new Int32Array(hn * 2); k2.set(hk); v2.set(hv); hk = k2; hv = v2; }
+    let i = hn++;
+    while (i > 0) { const p = (i - 1) >> 1; if (hk[p] <= k) break; hk[i] = hk[p]; hv[i] = hv[p]; i = p; }
+    hk[i] = k; hv[i] = v;
+  };
+  const pop = () => {
+    const top = hv[0], k = hk[--hn], v = hv[hn];
+    let i = 0;
+    for (;;) {
+      let c = 2 * i + 1;
+      if (c >= hn) break;
+      if (c + 1 < hn && hk[c + 1] < hk[c]) c++;
+      if (hk[c] >= k) break;
+      hk[i] = hk[c]; hv[i] = hv[c]; i = c;
+    }
+    hk[i] = k; hv[i] = v;
+    return top;
+  };
+  dist[s] = 0; push(s, 0);
+  while (hn) {
+    const u = pop();
+    if (done[u]) continue;
+    done[u] = 1;
+    if (u === t) break;
+    const ux = u % W, uy = (u - ux) / W, du = dist[u];
+    for (let dy = -1; dy <= 1; dy++) {
+      const ny = uy + dy;
+      if (ny < 0 || ny >= H) continue;
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = ux + dx;
+        if ((!dx && !dy) || nx < 0 || nx >= W) continue;
+        const v = ny * W + nx;
+        if (done[v]) continue;
+        const nd = du + cost[v] * (dx && dy ? 1.4142 : 1);
+        if (nd < dist[v]) { dist[v] = nd; prev[v] = u; push(v, nd); }
+      }
+    }
+  }
+  const out = [];
+  for (let v = t; v !== -1; v = v === s ? -1 : prev[v]) out.push(v % W + x0, ((v - v % W) / W) + y0);
+  const pts = [];
+  for (let i = out.length - 2; i >= 0; i -= 2) pts.push(out[i], out[i + 1]);
+  return pts;
+}
+function clampPt(it, p) { return [Math.min(it.w - 1, Math.max(0, Math.floor(p[0]))), Math.min(it.h - 1, Math.max(0, Math.floor(p[1])))]; }
+function snap(e, it, p) {
+  // pull the point onto the strongest edge within a few screen pixels (if there is a real edge there)
+  const r = Math.min(24, Math.max(2, Math.round(10 / S.vp.s)));
+  let bx = p[0], by = p[1], best = -1;
+  for (let y = Math.max(0, p[1] - r); y <= Math.min(it.h - 1, p[1] + r); y++)
+    for (let x = Math.max(0, p[0] - r); x <= Math.min(it.w - 1, p[0] + r); x++) {
+      const d2 = (x - p[0]) ** 2 + (y - p[1]) ** 2;
+      if (d2 > r * r) continue;
+      const sc = e[y * it.w + x] - 16 * Math.sqrt(d2) / r;
+      if (sc > best) { best = sc; bx = x; by = y; }
+    }
+  return best >= 20 ? [bx, by] : p;
+}
+const lassoLast = () => [L.pts[L.pts.length - 2], L.pts[L.pts.length - 1]];
+function lassoCommit() {
+  if (L.live.length > 2) for (let i = 2; i < L.live.length; i++) L.pts.push(L.live[i]);  // live[0..1] is the last anchor
+  L.anchors.push(L.pts.length / 2 - 1);
+  L.live = [];
+}
+function lassoUpdate() {
+  L.raf = 0;
+  const it = S.cur;
+  if (!L.on || it !== L.it || !L.want || !S.vp) return;
+  const e = edgeMap(it), a = lassoLast(), raw = clampPt(it, L.want), p = snap(e, it, raw);
+  const n = L.pts.length / 2 + L.live.length / 2;
+  L.near = n > 8 && Math.hypot(raw[0] - L.pts[0], raw[1] - L.pts[1]) * S.vp.s < 10;
+  L.live = L.near ? liveWire(e, it.w, it.h, a, [L.pts[0], L.pts[1]]) : liveWire(e, it.w, it.h, a, p);
+  if (!L.near && Math.hypot(p[0] - a[0], p[1] - a[1]) * S.vp.s > 48) lassoCommit();  // automatic anchor
+  lassoDraw();
+}
+function lassoMove(pt) { L.want = pt; if (!L.raf) L.raf = requestAnimationFrame(lassoUpdate); }
+function lassoDown(pt, ev) {
+  const it = S.cur, raw = clampPt(it, pt);
+  if (!L.on) {
+    if (ev.button !== 0) return;
+    const p = snap(edgeMap(it), it, raw);
+    Object.assign(L, { on: true, it, pts: [p[0], p[1]], anchors: [0], live: [], want: pt, near: false });
+    lassoDraw();
+    return;
+  }
+  if (ev.button === 2) return lassoClose(true);
+  if (L.raf) { cancelAnimationFrame(L.raf); L.raf = 0; }
+  L.want = pt; lassoUpdate();
+  if (L.near) return lassoClose(ev.altKey);
+  lassoCommit(); lassoDraw();
+}
+function lassoBack() {
+  if (L.anchors.length <= 1) return lassoCancel();
+  L.anchors.pop();
+  L.pts.length = (L.anchors[L.anchors.length - 1] + 1) * 2;
+  L.live = [];
+  if (L.want) lassoUpdate(); else lassoDraw();
+}
+function lassoFinish() {  // leaving the lasso keeps what was drawn, like a brush stroke (Esc discards instead)
+  if (L.on && L.it === S.cur && L.pts.length + L.live.length >= 6) lassoClose(false);
+  else lassoCancel();
+}
+function lassoCancel() {
+  if (L.raf) cancelAnimationFrame(L.raf);
+  Object.assign(L, { on: false, it: null, pts: [], anchors: [], live: [], want: null, near: false, raf: 0 });
+  lassoDraw();
+}
+function lassoClose(sub) {
+  const it = L.it;
+  if (!L.on || it !== S.cur) return lassoCancel();
+  if (L.live.length) lassoCommit();
+  const e = edgeMap(it), back = liveWire(e, it.w, it.h, lassoLast(), [L.pts[0], L.pts[1]]);
+  const poly = L.pts.concat(back.slice(2));
+  lassoCancel();
+  let area = 0;
+  for (let i = 0, n = poly.length; i < n; i += 2) { const j = (i + 2) % n; area += poly[i] * poly[j + 1] - poly[j] * poly[i + 1]; }
+  if (poly.length < 6 || Math.abs(area) / 2 < 4) return;
+  const path = new Path2D();
+  path.moveTo(poly[0] + 0.5, poly[1] + 0.5);
+  for (let i = 2; i < poly.length; i += 2) path.lineTo(poly[i] + 0.5, poly[i + 1] + 0.5);
+  path.closePath();
+  const v = sub ? 0 : Math.round(S.mix * 2.55), col = `rgb(${v},${v},${v})`;
+  pushUndo(it);
+  const targets = [g2(it.mask, true)];
+  if (!sub) {  // also into the current-stroke canvas, for its tint
+    fit2(strokeC, it.w, it.h);
+    const sc = g2(strokeC); sc.fillStyle = "#000"; sc.fillRect(0, 0, it.w, it.h);
+    targets.push(sc);
+  }
+  for (const c of targets) {
+    c.globalCompositeOperation = "source-over";
+    c.fillStyle = c.strokeStyle = col; c.lineWidth = 1; c.lineJoin = "round";
+    c.fill(path); c.stroke(path);  // the outline pixels sit on the edge itself: include them
+  }
+  it.hasMask = sub ? hasPixels(it) : true;
+  composite(); scheduleSave(it); syncPanel(); renderStrip();
+  if (sub) flashAll(900);
+  else if (S.eyeMode === "auto") {  // show the filled area a moment, like a brush stroke
+    strokeTool = "brush"; S.flash = true; clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => { S.flash = false; render(); }, 900);
+    render();
+  }
+}
+function lassoDraw() {
+  const svg = $("#lassoSvg");
+  const show = L.on && S.cur && S.cur === L.it && S.vp && L.pts.length;
+  svg.toggleAttribute("hidden", !show);
+  if (!show) return;
+  const { s, x, y } = S.vp;
+  const X = v => ((v + 0.5) * s + x).toFixed(1), Y = v => ((v + 0.5) * s + y).toFixed(1);
+  const all = L.live.length ? L.pts.concat(L.live.slice(2)) : L.pts;
+  let d = "", lx = -1e9, ly = -1e9;
+  for (let i = 0; i < all.length; i += 2) {
+    const sx = (all[i] + 0.5) * s, sy = (all[i + 1] + 0.5) * s;
+    if (i && i < all.length - 2 && Math.abs(sx - lx) < 1.5 && Math.abs(sy - ly) < 1.5) continue;  // thin out for long outlines
+    d += (i ? "L" : "M") + X(all[i]) + " " + Y(all[i + 1]);
+    lx = sx; ly = sy;
+  }
+  $("#lzB").setAttribute("d", d); $("#lzW").setAttribute("d", d);
+  let a = "";
+  for (const k of L.anchors.slice(1)) a += `M${(+X(L.pts[k * 2]) - 2.5).toFixed(1)} ${(+Y(L.pts[k * 2 + 1]) - 2.5).toFixed(1)}h5v5h-5z`;
+  $("#lzA").setAttribute("d", a);
+  const st = $("#lzStart");
+  st.setAttribute("cx", X(L.pts[0])); st.setAttribute("cy", Y(L.pts[1]));
+  st.classList.toggle("near", L.near);
+}
+
+/* ---------------- pointer ---------------- */
+let drag = null, cursorPt = null;
+const onUI = e => !!(e.target && e.target.closest && e.target.closest(".floatbar"));  // toolbar inside the stage
+const toImg = (e, r) => [(e.clientX - r.left - S.vp.x) / S.vp.s, (e.clientY - r.top - S.vp.y) / S.vp.s];
+function updateCursor() {
+  const b = $("#brushCur");
+  const pt = S.spaceMode === "size" ? S.sizeAt : cursorPt;
+  if (!S.brushMode || S.tool === "lasso" || !S.vp || !pt || (drag && drag.t === "pan") || (S.space && S.spaceMode !== "size")) { b.hidden = true; return; }
+  const d = S.brush * S.vp.s;
+  b.hidden = false; b.style.width = b.style.height = d + "px";
+  b.style.left = pt[0] + "px"; b.style.top = pt[1] + "px";
+  b.style.background = S.tool === "erase" ? "none" : `rgba(${maskRGB()}, ${(0.32 * S.mix / 100).toFixed(3)})`;
+}
+stage.addEventListener("contextmenu", e => e.preventDefault());
+stage.addEventListener("pointerdown", e => {
+  if (!S.cur || !S.vp || onUI(e)) return;
+  const r = stage.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+  const divOn = !$("#div").hidden, dx = px - S.split * r.width;
+  const onKnob = divOn && Math.hypot(dx, py - r.height / 2) < 22, onLine = divOn && Math.abs(dx) < 9;
+  stage.setPointerCapture(e.pointerId);
+  if (e.button === 1 || S.space) { drag = { t: "pan", x: e.clientX, y: e.clientY }; if (S.space) { S.spaceMode = "pan"; $("#sizeTip").hidden = true; } }
+  else if (e.button === 0 && (onKnob || (onLine && !S.brushMode))) drag = { t: "split" };
+  else if (S.brushMode && S.tool === "lasso" && (e.button === 0 || e.button === 2)) lassoDown(toImg(e, r), e);
+  else if (S.brushMode && (e.button === 0 || e.button === 2)) {
+    strokeTool = e.button === 2 ? "erase" : S.tool;
+    pushUndo(S.cur); S.painting = true; lastPt = null; drag = { t: "paint" };
+    fit2(strokeC, S.cur.w, S.cur.h); { const sc = g2(strokeC); sc.fillStyle = "#000"; sc.fillRect(0, 0, S.cur.w, S.cur.h); }
+    clearTimeout(flashTimer); S.flash = false;
+    strokeTo(toImg(e, r)); render();
+  } else if (e.button === 0) drag = { t: "pan", x: e.clientX, y: e.clientY };
+  if (drag && drag.t === "pan") stage.classList.add("panning");
+  updateCursor();
+});
+stage.addEventListener("pointermove", e => {
+  const r = stage.getBoundingClientRect();
+  cursorPt = !drag && onUI(e) ? null : [e.clientX - r.left, e.clientY - r.top]; updateCursor();  // no brush circle over the toolbar
+  if (L.on && !drag && S.vp && !onUI(e)) lassoMove(toImg(e, r));
+  if (!drag) return;
+  if (drag.t === "split") { S.split = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); render(); }
+  else if (drag.t === "paint") strokeTo(toImg(e, r));
+  else { S.vp.x += e.clientX - drag.x; S.vp.y += e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY; render(); }
+});
+function pointerEnd() {
+  if (drag && drag.t === "paint") endStroke();
+  drag = null; stage.classList.remove("panning"); render(); updateCursor();
+}
+stage.addEventListener("pointerup", pointerEnd);
+stage.addEventListener("pointercancel", pointerEnd);
+stage.addEventListener("pointerleave", () => { cursorPt = null; updateCursor(); });
+
+/* ---------------- keyboard ---------------- */
+addEventListener("keydown", e => {
+  if ($("#helpDlg").open || $("#quitDlg").open) return;
+  const k = e.key.toLowerCase(), el = e.target;
+  const typing = (el.tagName === "INPUT" && el.type !== "range") || el.tagName === "TEXTAREA";
+  if (e.ctrlKey || e.metaKey) {
+    if (k === "o") { e.preventDefault(); pick(); }
+    else if (k === "s") { e.preventDefault(); download(); }
+    else if (k === "enter") { e.preventDefault(); if (S.cur) enqueue(S.cur, true); }
+    else if (k === "z" && !typing) { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+    else if (k === "y" && !typing) { e.preventDefault(); redo(); }
+    return;
+  }
+  if (typing || e.altKey) return;
+  if (e.key === " ") { e.preventDefault(); if (!S.space) { S.space = true; S.spaceMode = "idle"; render(); updateCursor(); } return; }
+  if (e.key === "?") { $("#helpDlg").showModal(); return; }
+  if (!S.cur) return;
+  const onRange = el.tagName === "INPUT";
+  const act = {
+    "1": () => { S.view = "cmp"; render(); }, "2": () => { S.view = "before"; render(); }, "3": () => { S.view = "after"; render(); },
+    x: () => { if (e.repeat || !S.cur.result) return; S.view = S.view === "after" ? "before" : "after"; render(); },
+    z: () => { if (!e.repeat) { S.peekOrig = true; render(); } },
+    m: () => { if (!e.repeat) { S.peekMask = true; render(); } },
+    // B toggles: enter painting; in painting with the eraser -> back to brush; with the brush -> finish
+    b: () => { if (e.repeat) return; if (!S.brushMode) setBrushMode(true, "brush"); else if (S.tool !== "brush") setBrushMode(true, "brush"); else setBrushMode(false); },
+    e: () => setBrushMode(true, "erase"),
+    // L toggles the lasso (an open outline is closed and kept); Esc leaves the brush or the lasso (an open outline is dropped)
+    l: () => { if (!e.repeat) S.brushMode && S.tool === "lasso" ? setBrushMode(false) : setBrushMode(true, "lasso"); },
+    i: () => { if (!e.repeat) invertMask(); },
+    ...(L.on && {  // only while an outline is open, so Enter still presses a focused button otherwise
+      enter: () => lassoClose(false),
+      backspace: lassoBack,
+      delete: lassoBack,
+    }),
+    escape: () => { lassoCancel(); setBrushMode(false); },
+    "[": () => setBrushSize(Math.min(S.brush - 1, S.brush / 1.2), true),
+    "]": () => setBrushSize(Math.max(S.brush + 1, S.brush * 1.2), true),
+    f: fit, "0": () => zoomAt(1, null, null, true),
+    arrowleft: () => !onRange && step(-1), arrowright: () => !onRange && step(1),
+  }[k];
+  if (act) { if (!(onRange && k.startsWith("arrow"))) e.preventDefault(); act(); }
+});
+addEventListener("keyup", e => {
+  const k = e.key.toLowerCase();
+  if (e.key === " ") { S.space = false; S.spaceMode = ""; $("#sizeTip").hidden = true; render(); updateCursor(); }
+  if (k === "z" && S.peekOrig) { S.peekOrig = false; render(); }
+  if (k === "m" && S.peekMask) { S.peekMask = false; render(); }
+});
+addEventListener("blur", () => { S.space = S.peekOrig = S.peekMask = false; S.spaceMode = ""; $("#sizeTip").hidden = true; render(); updateCursor(); });
+
+syncBrushUI(); syncPanel(); renderStrip(); render();
+</script>
+</body>
+</html>
